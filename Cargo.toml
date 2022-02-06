@@ -9,3 +9,9 @@ edition = "2021"
 async-std = {version = "1.10.0", features = ["attributes"]}
 dashmap = "5.0.0"
 tide = "0.16.0"
+base64 = "0.13.0"
+config = "0.11.0"
+# Used to decrypt game packets
+rust-crypto = "0.2.36"
+# Used for clock()
+libc = "0.2.117"
