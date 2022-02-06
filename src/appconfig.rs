@@ -33,6 +33,7 @@ impl AppConfig {
 	pub fn New() -> AppConfig {
 		let mut conf = config::Config::default();
 
+		log::info!("Setting defaults");
 		conf
 			.set_default("udp_address", "0.0.0.0:37015")
 			.unwrap();
@@ -65,10 +66,12 @@ impl AppConfig {
 			.set_default("auth_server", "https://northstar.tf")
 			.unwrap();
 
+		log::info!("Merging configuration");
 		conf
 			.merge(config::File::with_name("Titanfront")).unwrap()
 			.merge(config::Environment::with_prefix("Titanfront")).unwrap();
 
+		log::info!("Builing configuration struct");
 		let mut admins: Vec<u64> = Vec::new();
 		match conf.get_array("admins") {
 			Ok(ads) => {

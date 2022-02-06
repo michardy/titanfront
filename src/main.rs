@@ -106,6 +106,7 @@ impl RouteCfg {
 						let user_name = String::from_utf8_lossy(&payload[29..i]);
 
 						if !config.auth_enabled {
+							log::info!("Unauthenticated connection from {}:{}", user_id, user_name);
 							pair.value_mut().status = ConnStat::Authenticated;
 							pair.value().sock.send_to(&payload, pair.value().target);
 							return;
@@ -116,12 +117,14 @@ impl RouteCfg {
 						// The Cow has to be dereferenced
 						match self.tokens.get(&*token) {
 							Some(kv) => {
+								log::info!("Connection with token from {}:{}", user_id, user_name);
 								pair.value_mut().status = ConnStat::Authenticated;
 								pair.value().sock.send_to(&payload, pair.value().target);
 								return;
 							},
 							None => {
 								// Mark the IP blocked until we can delete it without deadlocking
+								log::warn!("Failed auth from {}:{} with token {}", user_id, user_name, token);
 								pair.value_mut().status = ConnStat::Blocked;
 								self.available.write().unwrap().push(
 									pair.value().sock.try_clone()
@@ -133,6 +136,7 @@ impl RouteCfg {
 					// Midway throught cleanup on another thread.
 					// Do nothing
 					ConnStat::Blocked => {
+						log::warn!("Connection on blocked socket");
 						return;
 					}
 				}
@@ -160,13 +164,16 @@ impl RouteCfg {
 						});
 						return;
 					} else {
+						log::warn!("Connection blocked. Not enough sockets");
 						return;
 					}
 				} else {
+					log::warn!("Connection blocked. Bad packet");
 					return;
 				}
 			}
 		}
+		log::info!("Cleaning up closed socket");
 		// TODO: clean up this removal
 		// It has to go outside the scope of the switch's borrow or it might race
 		// Alternatly use a struct that does not race so much
