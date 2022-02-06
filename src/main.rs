@@ -193,15 +193,21 @@ fn incoming_handler(socket: UdpSocket, config: AppConfig, routecfg: RouteCfg) {
 #[async_std::main]
 async fn main() -> tide::Result<()> {
 
+	env_logger::init();
+
+	log::info!("Parsing config");
 	let conf = appconfig::AppConfig::New();
 
+	log::info!("Create UDP sockets");
 	// Setup UDP relaying sockets
 	let proxy_sock = UdpSocket::bind(conf.udp_address)?;
 	let mut internal_sockets: Vec<UdpSocket> = Vec::with_capacity(16);
+	log::info!("Binding UDP sockets");
 	for _ in 0..conf.player_count+conf.admins.len() {
 		internal_sockets.push(UdpSocket::bind(&conf.relay_address)?);
 	}
 
+	log::info!("Create route tables");
 	let auth_tables = RouteCfg {
 		tokens: Arc::new(DashMap::new()),
 		ips: Arc::new(DashMap::new()),
@@ -211,6 +217,7 @@ async fn main() -> tide::Result<()> {
 		players: Arc::new(DashMap::new())
 	};
 
+	log::info!("Spawn player receive threads");
 	for _ in 0..conf.player_count+conf.admins.len() {
 		// Yes, clones are expensive but this is fixed startup cost
 		let cfg = conf.clone();
@@ -222,7 +229,9 @@ async fn main() -> tide::Result<()> {
 	}
 
 	// Setup authserver
+	log::info!("Setting up auth server");
 	let mut authserver = tide::with_state(auth_tables);
+	log::info!("Starting auth server");
 	authserver.listen(conf.auth_address).await?;
 	Ok(())
 }
