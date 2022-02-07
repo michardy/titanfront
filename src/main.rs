@@ -1,4 +1,5 @@
 mod appconfig;
+mod tsock;
 
 use std::{
 	sync::{
@@ -17,6 +18,9 @@ use appconfig::AppConfig;
 use crypto::{aes_gcm::AesGcm, aead::AeadEncryptor};
 use dashmap::DashMap;
 use ffi::clock;
+use tsock::TUdpSocket;
+
+use crate::tsock::TryClone;
 
 const PLAYER_CONNECT_MESSAGE: [u8; 13] = [0xFF, 0xFF, 0xFF, 0xFF, 0x48, 0x63, 0x6F, 0x6E, 0x6E, 0x65, 0x63, 0x74, 0x00];
 
@@ -36,11 +40,8 @@ enum ConnStat {
 
 struct Bind {
 	status: ConnStat,
-	sock: UdpSocket,
-	target: SocketAddr,
-	/// Since UdpSocket does not implement hash they are given IDs
-	/// This property allows the return thread to do hashmap lookups
-	socket_id: u16
+	sock: TUdpSocket,
+	target: SocketAddr
 }
 
 struct PlayerInfo {
@@ -48,13 +49,13 @@ struct PlayerInfo {
 }
 
 #[derive(Clone)]
-pub struct RouteCfg {
+pub struct Router {
 	/// Map auth tokens to user IDs to prevent spoofing
 	tokens: Arc<DashMap<String, u64>>,
 	/// Map of client addresses to relay sockets
 	ips: Arc<DashMap<SocketAddr, Bind>>,
 	/// Allows return relay threads to find client
-	sockets: Arc<DashMap<u16, SocketAddr>>,
+	sockets: Arc<DashMap<TUdpSocket, SocketAddr>>,
 	// Dashmap is not really benchmarked for an update workload
 	// Others are fine but this may be slow
 	/// Socket use timestamps
@@ -62,12 +63,12 @@ pub struct RouteCfg {
 	counters: Arc<DashMap<SocketAddr,i64>>,
 	// TODO: consider making non blocking
 	/// Available relay sockets
-	available: Arc<RwLock<Vec<UdpSocket>>>,
+	available: Arc<RwLock<Vec<TUdpSocket>>>,
 	players: Arc<DashMap<u64, PlayerInfo>>
 }
 
 
-pub type Request = tide::Request<RouteCfg>;
+pub type Request = tide::Request<Router>;
 
 fn decrypt(ctext: &Vec<u8>, config: &AppConfig) -> Vec<u8> {
 	let aad: Vec<u8> = Vec::new();
@@ -80,8 +81,8 @@ fn decrypt(ctext: &Vec<u8>, config: &AppConfig) -> Vec<u8> {
 	out
 }
 
-impl RouteCfg {
-	fn relay_incoming(&self, payload: &Vec<u8>, addr: &SocketAddr, config: &AppConfig) {
+impl Router {
+	fn relay_external(&self, payload: &Vec<u8>, addr: &SocketAddr, config: &AppConfig) {
 		match self.ips.get_mut(&addr) {
 			Some(mut pair) => {
 				match pair.value().status {
@@ -128,7 +129,7 @@ impl RouteCfg {
 								pair.value_mut().status = ConnStat::Blocked;
 								self.available.write().unwrap().push(
 									pair.value().sock.try_clone()
-										.expect("Could not clone socket for reassignment")
+										.expect("Failed to clone socket for reassignment")
 								);
 							},
 						}
@@ -181,14 +182,37 @@ impl RouteCfg {
 		// Check to make sure we are not deleting in use IPs
 		assert!(kv.unwrap().1.status == ConnStat::Blocked);
 	}
+
+	fn relay_internal(&self, payload: &Vec<u8>, sender: &TUdpSocket, proxy: &UdpSocket) {
+		match self.sockets.get(&sender) {
+			Some(pair) => {
+				proxy.send_to(&payload, pair.value());
+			},
+			None => {},
+		}
+	}
 }
 
-fn incoming_handler(socket: UdpSocket, config: AppConfig, routecfg: RouteCfg) {
+fn external_handler(socket: UdpSocket, config: AppConfig, routecfg: Router) {
 	loop {
-		let mut buf: Vec<u8> = Vec::with_capacity(config.receive_buf_size);
+		let mut buf: Vec<u8> = vec![0; config.receive_buf_size];
 		match socket.recv_from(&mut buf) {
-			Ok((sise, addr)) => {
-				routecfg.relay_incoming(&buf, &addr, &config);
+			Ok((_, addr)) => {
+				routecfg.relay_external(&buf, &addr, &config);
+			},
+			Err(_) => {
+				panic!("Error receiving")
+			},
+		}
+	}
+}
+
+fn internal_handler(socket: TUdpSocket, config: AppConfig, routecfg: Router, proxy: UdpSocket) {
+	loop {
+		let mut buf: Vec<u8> = vec![0; config.receive_buf_size];
+		match socket.recv_from(&mut buf) {
+			Ok((_, addr)) => {
+				routecfg.relay_internal(&buf, &socket, &proxy);
 			},
 			Err(_) => {
 				panic!("Error receiving")
@@ -208,21 +232,37 @@ async fn main() -> tide::Result<()> {
 	log::info!("Create UDP sockets");
 	// Setup UDP relaying sockets
 	let proxy_sock = UdpSocket::bind(conf.udp_address)?;
-	let mut internal_sockets: Vec<UdpSocket> = Vec::with_capacity(16);
+	let mut internal_sockets: Vec<TUdpSocket> = Vec::with_capacity(16);
 	log::info!("Binding UDP sockets");
-	for _ in 0..conf.player_count+conf.admins.len() {
-		internal_sockets.push(UdpSocket::bind(&conf.relay_address)?);
+	for i in 0..conf.player_count+conf.admins.len() {
+		internal_sockets.push(
+			TUdpSocket::bind(&conf.relay_address, i)
+				.expect("Failed to create internal socket")
+		);
 	}
 
 	log::info!("Create route tables");
-	let auth_tables = RouteCfg {
+	let auth_tables = Router {
 		tokens: Arc::new(DashMap::new()),
 		ips: Arc::new(DashMap::new()),
 		sockets: Arc::new(DashMap::new()),
 		counters: Arc::new(DashMap::new()),
-		available: Arc::new(RwLock::new(internal_sockets)),
+		available: Arc::new(RwLock::new(
+			internal_sockets.try_clone()
+				.expect("Failed to clone internal sockets for route table")
+		)),
 		players: Arc::new(DashMap::new())
 	};
+
+	log::info!("Spawn server receive threads");
+	for s in internal_sockets {
+		let cfg = conf.clone();
+		let prxy = proxy_sock.try_clone().unwrap();
+		let tables = auth_tables.clone();
+		thread::spawn(|| {
+			internal_handler(s, cfg, tables, prxy);
+		});
+	}
 
 	log::info!("Spawn player receive threads");
 	for _ in 0..conf.player_count+conf.admins.len() {
@@ -231,7 +271,7 @@ async fn main() -> tide::Result<()> {
 		let prxy = proxy_sock.try_clone().unwrap();
 		let tables = auth_tables.clone();
 		thread::spawn(|| {
-			incoming_handler(prxy, cfg, tables);
+			external_handler(prxy, cfg, tables);
 		});
 	}
 
