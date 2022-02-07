@@ -14,7 +14,7 @@ use std::{
 };
 
 use appconfig::AppConfig;
-use crypto::{aes_gcm::AesGcm, aead::AeadEncryptor};
+use crypto::{aes_gcm::AesGcm, aead::AeadDecryptor};
 use dashmap::DashMap;
 use ffi::clock;
 use tsock::TUdpSocket;
@@ -71,12 +71,12 @@ pub type Request = tide::Request<Router>;
 
 fn decrypt(ctext: &Vec<u8>, config: &AppConfig) -> Vec<u8> {
 	let aad: Vec<u8> = Vec::new();
-	let mut out: Vec<u8> = Vec::new();
+	let mut out: Vec<u8> = vec![0; ctext[28..].len()];
 	// TODO: avoid regenerating GCM object every call to set nonce
 	let mut gcm = AesGcm::new(crypto::aes::KeySize::KeySize128, &config.key, &ctext[0..12], &aad);
 	// This needs to be cloned as the original ctext may be needed if the server is vanilla
 	let mut tag: Vec<u8> = Vec::from(&ctext[12..28]);
-	gcm.encrypt(&ctext[28..], &mut out, &mut tag);
+	gcm.decrypt(&ctext[28..], &mut out, &mut tag);
 	out
 }
 
