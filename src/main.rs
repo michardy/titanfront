@@ -4,8 +4,7 @@ mod tsock;
 use std::{
 	sync::{
 		Arc,
-		RwLock,
-		mpsc
+		RwLock
 	},
 	net::{
 		SocketAddr,
@@ -60,7 +59,7 @@ pub struct Router {
 	// Others are fine but this may be slow
 	/// Socket use timestamps
 	/// Used to disconnect dead sessions
-	counters: Arc<DashMap<SocketAddr,i64>>,
+	counters: Arc<DashMap<SocketAddr, i64>>,
 	// TODO: consider making non blocking
 	/// Available relay sockets
 	available: Arc<RwLock<Vec<TUdpSocket>>>,
@@ -96,7 +95,7 @@ impl Router {
 					ConnStat::Connecting => {
 						let plain = decrypt(payload, config);
 						let user_id = u64::from_le_bytes(plain[21..29].try_into().unwrap());
-						let mut i: usize = 29;
+						let i: usize = 29;
 						// Iterate the username until we find a null terminator
 						for i in 29..payload.len() {
 							if payload[i] == 0 {
@@ -118,10 +117,20 @@ impl Router {
 						// The Cow has to be dereferenced
 						match self.tokens.get(&*token) {
 							Some(kv) => {
-								log::info!("Connection with token from {}:{}", user_id, user_name);
-								pair.value_mut().status = ConnStat::Authenticated;
-								pair.value().sock.send_to(&payload, pair.value().target);
-								return;
+								if kv.value() == &user_id {
+									log::info!("Connection with token from {}:{}", user_id, user_name);
+									pair.value_mut().status = ConnStat::Authenticated;
+									pair.value().sock.send_to(&payload, pair.value().target);
+									return;
+								} else {
+									log::info!(
+										"Connection denied due to user {} spoofing {}:{}",
+										kv.value(),
+										user_id,
+										user_name
+									);
+									return;
+								}
 							},
 							None => {
 								// Mark the IP blocked until we can delete it without deadlocking
@@ -211,7 +220,7 @@ fn internal_handler(socket: TUdpSocket, config: AppConfig, routecfg: Router, pro
 	loop {
 		let mut buf: Vec<u8> = vec![0; config.receive_buf_size];
 		match socket.recv_from(&mut buf) {
-			Ok((_, addr)) => {
+			Ok((_, _)) => {
 				routecfg.relay_internal(&buf, &socket, &proxy);
 			},
 			Err(_) => {
@@ -227,7 +236,7 @@ async fn main() -> tide::Result<()> {
 	env_logger::init();
 
 	log::info!("Parsing config");
-	let conf = appconfig::AppConfig::New();
+	let conf = appconfig::AppConfig::new();
 
 	log::info!("Create UDP sockets");
 	// Setup UDP relaying sockets
@@ -277,7 +286,7 @@ async fn main() -> tide::Result<()> {
 
 	// Setup authserver
 	log::info!("Setting up auth server");
-	let mut authserver = tide::with_state(auth_tables);
+	let authserver = tide::with_state(auth_tables);
 	log::info!("Starting auth server");
 	authserver.listen(conf.auth_address).await?;
 	Ok(())

@@ -30,7 +30,7 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-	pub fn New() -> AppConfig {
+	pub fn new() -> AppConfig {
 		let mut conf = config::Config::default();
 
 		log::info!("Setting defaults");
