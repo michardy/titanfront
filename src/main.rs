@@ -59,7 +59,7 @@ pub struct Router {
 	// Others are fine but this may be slow
 	/// Socket use timestamps
 	/// Used to disconnect dead sessions
-	counters: Arc<DashMap<SocketAddr, i64>>,
+	counters: Arc<DashMap<SocketAddr, libc::clock_t>>,
 	// TODO: consider making non blocking
 	/// Available relay sockets
 	available: Arc<RwLock<Vec<TUdpSocket>>>,
