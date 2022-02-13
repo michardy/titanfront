@@ -76,6 +76,9 @@ fn decrypt(ctext: &Vec<u8>, config: &AppConfig) -> Vec<u8> {
 	let mut gcm = AesGcm::new(crypto::aes::KeySize::KeySize128, &config.key, &ctext[0..12], &aad);
 	// This needs to be cloned as the original ctext may be needed if the server is vanilla
 	let mut tag: Vec<u8> = Vec::from(&ctext[12..28]);
+	for i in 0..16 {
+		tag[i] ^= config.tag_key[i];
+	}
 	gcm.decrypt(&ctext[28..], &mut out, &mut tag);
 	out
 }
@@ -136,6 +139,7 @@ impl Router {
 								// Mark the IP blocked until we can delete it without deadlocking
 								log::warn!("Failed auth from {}:{} with token {}", user_id, user_name, token);
 								pair.value_mut().status = ConnStat::Blocked;
+								self.sockets.remove(&pair.value().sock);
 								self.available.write().unwrap().push(
 									pair.value().sock.try_clone()
 										.expect("Failed to clone socket for reassignment")
@@ -169,9 +173,11 @@ impl Router {
 						sock.send_to(&payload, config.target_servers[config.join_target]);
 						self.ips.insert(*addr, Bind {
 							status: ConnStat::Connecting,
-							sock: sock,
+							sock: sock.try_clone()
+								.expect("Error cloning socket into ip table"),
 							target: config.target_servers[config.join_target]
 						});
+						self.sockets.insert(sock, *addr);
 						return;
 					} else {
 						log::warn!("Connection blocked. Not enough sockets");
@@ -206,8 +212,8 @@ fn external_handler(socket: UdpSocket, config: AppConfig, routecfg: Router) {
 	loop {
 		let mut buf: Vec<u8> = vec![0; config.receive_buf_size];
 		match socket.recv_from(&mut buf) {
-			Ok((_, addr)) => {
-				routecfg.relay_external(&buf, &addr, &config);
+			Ok((rl, addr)) => {
+				routecfg.relay_external(&buf[..rl].to_vec(), &addr, &config);
 			},
 			Err(_) => {
 				panic!("Error receiving")
@@ -220,8 +226,8 @@ fn internal_handler(socket: TUdpSocket, config: AppConfig, routecfg: Router, pro
 	loop {
 		let mut buf: Vec<u8> = vec![0; config.receive_buf_size];
 		match socket.recv_from(&mut buf) {
-			Ok((_, _)) => {
-				routecfg.relay_internal(&buf, &socket, &proxy);
+			Ok((rl, _)) => {
+				routecfg.relay_internal(&buf[..rl].to_vec(), &socket, &proxy);
 			},
 			Err(_) => {
 				panic!("Error receiving")

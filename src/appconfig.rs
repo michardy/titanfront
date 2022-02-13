@@ -6,6 +6,8 @@ use std::net::SocketAddr;
 pub struct AppConfig {
 	/// Server encryption key
 	pub key: Vec<u8>,
+	/// Server GCM tag encryption key
+	pub tag_key: Vec<u8>,
 	/// UDP interface and port Titanfront should expose
 	pub udp_address: SocketAddr,
 	/// HTTP interface and port Titanfront should expose
@@ -111,9 +113,16 @@ impl AppConfig {
 			key: match conf.get_str("key") {
 				Ok(ks) => {
 					base64::decode(ks)
-						.expect("Bad key")
+						.expect("Bad server key")
 				},
 				Err(_) => panic!("Did not specify server encryption key")
+			},
+			tag_key: match conf.get_str("tag_key") {
+				Ok(ks) => {
+					base64::decode(ks)
+						.expect("Bad tag key")
+				},
+				Err(_) => panic!("Did not specify server GCM tag encryption key")
 			},
 			udp_address: match conf.get_str("udp_address") {
 				Ok(saddr) => match saddr.parse() {
