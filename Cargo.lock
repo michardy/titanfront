@@ -1755,6 +1755,7 @@ dependencies = [
  "libc",
  "log",
  "rust-crypto",
+ "serde 1.0.132",
  "tide",
 ]
 
