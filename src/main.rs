@@ -2,30 +2,27 @@ mod appconfig;
 mod tsock;
 mod authserver;
 mod router;
+mod apperr;
+
+use crate::{
+	tsock::TUdpSocket,
+	router::{Router, monitor_internal_routing, monitor_external_routing},
+};
 
 use std::{
-	sync::{
-		Arc,
-		RwLock
-	},
 	net::{
 		UdpSocket
-	},
-	thread
+	}
 };
 
-use dashmap::DashMap;
-use tsock::TUdpSocket;
-use router::{
-	Router,
-	internal_handler,
-	external_handler
+use {
+	anyhow::Result,
+	async_macros::select,
+	futures::future
 };
-
-use crate::tsock::TryClone;
 
 #[async_std::main]
-async fn main() -> tide::Result<()> {
+async fn main() -> Result<()> {
 
 	env_logger::init();
 
@@ -47,26 +44,32 @@ async fn main() -> tide::Result<()> {
 	log::info!("Create route tables");
 	let auth_tables = Router::new(&internal_sockets);
 
+	let mut internal_monitor_tasks: Vec<_> = Vec::new();
 	log::info!("Spawn server receive threads");
 	for s in internal_sockets {
 		let cfg = conf.clone();
 		let prxy = proxy_sock.try_clone().unwrap();
 		let tables = auth_tables.clone();
-		thread::spawn(|| {
-			internal_handler(s, cfg, tables, prxy);
-		});
+		internal_monitor_tasks.push(
+			monitor_internal_routing(s, cfg, tables, prxy)
+		);
 	}
 
+	// Internal and external futures are different types
+	let mut external_monitor_tasks: Vec<_> = Vec::new();
 	log::info!("Spawn player receive threads");
 	for _ in 0..conf.player_count+conf.admins.len() {
 		// Yes, clones are expensive but this is fixed startup cost
 		let cfg = conf.clone();
 		let prxy = proxy_sock.try_clone().unwrap();
 		let tables = auth_tables.clone();
-		thread::spawn(|| {
-			external_handler(prxy, cfg, tables);
-		});
+		external_monitor_tasks.push(
+				monitor_external_routing(prxy, cfg, tables)
+		);
 	}
 
-	authserver::build_and_run(auth_tables, conf).await
+	let mut server = authserver::build_and_run(auth_tables, conf);
+	let sel_int = future::select_all(internal_monitor_tasks);
+	let sel_ext = future::select_all(external_monitor_tasks);
+	select!(server, sel_int, sel_ext).await
 }

@@ -28,7 +28,10 @@ pub struct AppConfig {
 	/// Whether to use central authentication
 	pub auth_enabled: bool,
 	/// URL of the central auth server
-	pub auth_server: String
+	pub auth_server: String,
+	pub name: String,
+	pub description: String,
+	pub password: String
 }
 
 impl AppConfig {
@@ -66,6 +69,18 @@ impl AppConfig {
 
 		conf
 			.set_default("auth_server", "https://northstar.tf")
+			.unwrap();
+
+		conf
+			.set_default("name", "Titanfront server")
+			.unwrap();
+
+		conf
+			.set_default("description", "Titanfront server")
+			.unwrap();
+
+		conf
+			.set_default("password", "")
 			.unwrap();
 
 		log::info!("Merging configuration");
@@ -163,6 +178,18 @@ impl AppConfig {
 			auth_server: match conf.get_str("auth_server") {
 				Ok(s) => s,
 				Err(_) => panic!("Auth server is not a string")
+			},
+			name: match conf.get_str("name") {
+				Ok(s) => s,
+				Err(_) => panic!("Name is not a string")
+			},
+			description: match conf.get_str("description") {
+				Ok(s) => s,
+				Err(_) => panic!("Description is not a string")
+			},
+			password: match conf.get_str("password") {
+				Ok(s) => s,
+				Err(_) => panic!("Password is not a string")
 			},
 		}
 	}

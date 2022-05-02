@@ -1,3 +1,13 @@
+use anyhow::{Context, Result};
+
+use crate::{
+	tsock::{
+		TUdpSocket,
+		TryClone
+	},
+	appconfig::AppConfig, Err, apperr::TitanfrontError
+};
+
 use std::{
 	sync::{
 		Arc,
@@ -7,16 +17,18 @@ use std::{
 		SocketAddr,
 		UdpSocket
 	},
-	io::Error
+	thread,
+	panic
 };
 
-use crypto::{aes_gcm::AesGcm, aead::AeadDecryptor};
-use dashmap::DashMap;
-use ffi::clock;
-use crate::tsock::TUdpSocket;
-use crate::appconfig::AppConfig;
-
-use crate::tsock::TryClone;
+use {
+	crypto::{
+		aes_gcm::AesGcm,
+		aead::AeadDecryptor
+	},
+	dashmap::DashMap,
+	ffi::clock
+};
 
 const PLAYER_CONNECT_MESSAGE: [u8; 13] = [0xFF, 0xFF, 0xFF, 0xFF, 0x48, 0x63, 0x6F, 0x6E, 0x6E, 0x65, 0x63, 0x74, 0x00];
 
@@ -224,30 +236,60 @@ impl Router {
 	}
 }
 
-pub fn external_handler(socket: UdpSocket, config: AppConfig, routecfg: Router) {
+fn external_handler(socket: UdpSocket, config: AppConfig, routecfg: Router) -> Result<()> {
 	loop {
 		let mut buf: Vec<u8> = vec![0; config.receive_buf_size];
 		match socket.recv_from(&mut buf) {
 			Ok((rl, addr)) => {
 				routecfg.relay_external(&buf[..rl].to_vec(), &addr, &config);
 			},
-			Err(_) => {
-				panic!("Error receiving")
+			Err(e) => {
+				log::error!("Issue receiving from external socket");
+				return Err!(TitanfrontError::SwitchReceiveErr(e))
+					.context("Error receiving in external handler")
 			},
 		}
 	}
 }
 
-pub fn internal_handler(socket: TUdpSocket, config: AppConfig, routecfg: Router, proxy: UdpSocket) {
+fn internal_handler(socket: TUdpSocket, config: AppConfig, routecfg: Router, proxy: UdpSocket) ->Result<()> {
 	loop {
 		let mut buf: Vec<u8> = vec![0; config.receive_buf_size];
 		match socket.recv_from(&mut buf) {
 			Ok((rl, _)) => {
 				routecfg.relay_internal(&buf[..rl].to_vec(), &socket, &proxy);
 			},
-			Err(_) => {
-				panic!("Error receiving")
+			Err(e) => {
+				log::error!("Issue receiving from internal socket");
+				return Err!(TitanfrontError::SwitchReceiveErr(e))
+					.context("Error receiving in internal handler")
 			},
 		}
+	}
+}
+
+pub async fn monitor_external_routing(socket: UdpSocket, config: AppConfig, router: Router) {
+	let t = thread::spawn(|| {
+		external_handler(socket, config, router)
+			// Thread errors cannot propagate back to the main thread
+			// If they are unhandled by now they are fatal errors
+			.unwrap();
+	});
+	match t.join() {
+		Ok(_) => {},
+		Err(err) => panic::resume_unwind(err)
+	}
+}
+
+pub async fn monitor_internal_routing(s: TUdpSocket, config: AppConfig, router: Router, proxy: UdpSocket) {
+	let t = thread::spawn(|| {
+		internal_handler(s, config, router, proxy)
+			// Thread errors cannot propagate back to the main thread
+			// If they are unhandled by now they are fatal errors
+			.unwrap();
+	});
+	match t.join() {
+		Ok(_) => {},
+		Err(err) => panic::resume_unwind(err)
 	}
 }
