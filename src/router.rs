@@ -173,7 +173,7 @@ impl Router {
 							},
 						}
 					},
-					// Midway throught cleanup on another thread.
+					// Midway through cleanup on another thread.
 					// Do nothing
 					ConnStat::Blocked => {
 						log::warn!("Connection on blocked socket");
@@ -231,6 +231,10 @@ impl Router {
 			},
 			None => {},
 		}
+	}
+
+	pub fn get_player_count(&self) -> u64 {
+		self.ips.len() as u64
 	}
 }
 

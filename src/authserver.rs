@@ -87,6 +87,18 @@ pub struct AddResponse {
 	// error: Option<any>
 }
 
+#[derive(Serialize)]
+// These are northstar specified names provided as query parameters
+#[allow(non_snake_case)]
+// Some of these names are expected but currently unused
+// Because they follow the northstar naming convention they cannot
+// be prefixed with _
+#[allow(dead_code)]
+pub struct Heartbeat {
+	playerCount: u64,
+	id: String
+}
+
 async fn verify(_req: Request<State>) -> tide::Result {
 	Ok(
 		Response::builder(200)
@@ -188,7 +200,25 @@ async fn publish_server(state: &State) -> Result<()> {
 			return Err!(TitanfrontError::NMSResponseErr(e));
 		}
 	}
-	Ok(())
+	loop {
+		task::sleep(Duration::from_secs(5)).await;
+		let heartbeat = Heartbeat {
+			playerCount: state.router.get_player_count(),
+			id: state.server_id.read().unwrap().to_string()
+		};
+		let heartbeat_req = surf::post(format!("{}/server/heartbeat", conf.auth_server))
+			.body_json(&heartbeat).or_else(
+				|err|{Err!(TitanfrontError::AddRequestErr(err))}
+			)?
+			.recv_bytes();
+		match heartbeat_req.await {
+			Ok(r) => {},
+			Err(e) => {
+				log::error!("NorthstarMasterServer issued bad response to heartbeat");
+				return Err!(TitanfrontError::NMSResponseErr(e));
+			}
+		}
+	}
 }
 async fn server_caller(server: Server<State>, conf: AppConfig) -> Result<()> {
 	server.listen(conf.auth_address).await.or_else(|err|{Err!(err)})
