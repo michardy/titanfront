@@ -149,11 +149,15 @@ async fn auth_incoming_player(req: Request<State>) -> tide::Result {
 
 async fn publish_server(state: &State) -> Result<()> {
 	task::sleep(Duration::from_secs(1)).await;
-	let mut url = Url::parse("http://127.0.0.1/verify").unwrap();
+	let mut url = Url::parse("http://127.0.0.1:8081/verify").unwrap();
 	let conf = &state.conf;
 	match url.set_ip_host(conf.auth_address.ip()) {
 		Ok(_) => {},
 		Err(_) => log::warn!("Attempt to set IP for liveness check failed. Falling back")
+	}
+	match url.set_port(Some(conf.auth_address.port())) {
+		Ok(_) => {},
+		Err(_) => log::warn!("Attempt to set port for liveness check failed. Falling back")
 	}
 	match surf::get(url).recv_string().await {
 		Ok(s) => {
