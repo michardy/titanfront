@@ -6,20 +6,23 @@ mod apperr;
 
 use crate::{
 	tsock::TUdpSocket,
-	router::{Router, monitor_internal_routing, monitor_external_routing},
+	router::{
+		Router,
+		external_handler,
+		internal_handler
+	},
 };
 
 use std::{
 	net::{
 		UdpSocket
-	}
+	},
+	thread,
+	panic,
+	process
 };
 
-use {
-	anyhow::Result,
-	async_macros::select,
-	futures::future
-};
+use anyhow::Result;
 
 #[async_std::main]
 async fn main() -> Result<()> {
@@ -44,32 +47,39 @@ async fn main() -> Result<()> {
 	log::info!("Create route tables");
 	let auth_tables = Router::new(&internal_sockets);
 
-	let mut internal_monitor_tasks: Vec<_> = Vec::new();
+	let orig_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |panic_info| {
+        // invoke the default handler and exit the process
+        orig_hook(panic_info);
+        process::exit(1);
+    }));
+
 	log::info!("Spawn server receive threads");
 	for s in internal_sockets {
 		let cfg = conf.clone();
 		let prxy = proxy_sock.try_clone().unwrap();
 		let tables = auth_tables.clone();
-		internal_monitor_tasks.push(
-			monitor_internal_routing(s, cfg, tables, prxy)
-		);
+		thread::spawn(|| {
+			internal_handler(s, cfg, tables, prxy)
+				// Thread errors cannot propagate back to the main thread
+				// If they are unhandled by now they are fatal errors
+				.unwrap();
+		});
 	}
 
-	// Internal and external futures are different types
-	let mut external_monitor_tasks: Vec<_> = Vec::new();
 	log::info!("Spawn player receive threads");
 	for _ in 0..conf.player_count+conf.admins.len() {
 		// Yes, clones are expensive but this is fixed startup cost
 		let cfg = conf.clone();
 		let prxy = proxy_sock.try_clone().unwrap();
 		let tables = auth_tables.clone();
-		external_monitor_tasks.push(
-				monitor_external_routing(prxy, cfg, tables)
-		);
+		thread::spawn(|| {
+			external_handler(prxy, cfg, tables)
+				// Thread errors cannot propagate back to the main thread
+				// If they are unhandled by now they are fatal errors
+				.unwrap();
+		});
 	}
 
-	let mut server = authserver::build_and_run(auth_tables, conf);
-	let sel_int = future::select_all(internal_monitor_tasks);
-	let sel_ext = future::select_all(external_monitor_tasks);
-	select!(server, sel_int, sel_ext).await
+	authserver::build_and_run(auth_tables, conf).await
 }
