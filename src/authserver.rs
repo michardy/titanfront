@@ -182,6 +182,7 @@ async fn publish_server(state: &State) -> Result<()> {
 		password: conf.password.clone()
 	};
 	let post_req = surf::post(format!("{}/server/add_server", conf.auth_server))
+	.header("User-Agent", format!("R2Northstar/{}+dev", conf.version))
 		.body_json(&add_req).or_else(
 			|err|{Err!(TitanfrontError::AddRequestErr(err))}
 		)?
@@ -211,6 +212,7 @@ async fn publish_server(state: &State) -> Result<()> {
 			id: state.server_id.read().unwrap().to_string()
 		};
 		let heartbeat_req = surf::post(format!("{}/server/heartbeat", conf.auth_server))
+			.header("User-Agent", format!("R2Northstar/{}+dev", conf.version))
 			.body_json(&heartbeat).or_else(
 				|err|{Err!(TitanfrontError::AddRequestErr(err))}
 			)?

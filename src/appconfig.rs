@@ -31,7 +31,9 @@ pub struct AppConfig {
 	pub auth_server: String,
 	pub name: String,
 	pub description: String,
-	pub password: String
+	pub password: String,
+	// TODO: derive this rather than setting it
+	pub version: String,
 }
 
 impl AppConfig {
@@ -81,6 +83,10 @@ impl AppConfig {
 
 		conf
 			.set_default("password", "")
+			.unwrap();
+
+		conf
+			.set_default("version", "1.7.0")
 			.unwrap();
 
 		log::info!("Merging configuration");
@@ -190,6 +196,10 @@ impl AppConfig {
 			password: match conf.get_str("password") {
 				Ok(s) => s,
 				Err(_) => panic!("Password is not a string")
+			},
+			version: match conf.get_str("version") {
+				Ok(s) => s,
+				Err(_) => panic!("Version is not a string")
 			},
 		}
 	}
