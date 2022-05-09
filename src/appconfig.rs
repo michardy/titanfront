@@ -86,7 +86,7 @@ impl AppConfig {
 			.unwrap();
 
 		conf
-			.set_default("version", "1.7.0")
+			.set_default("version", "")
 			.unwrap();
 
 		log::info!("Merging configuration");
