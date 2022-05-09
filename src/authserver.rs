@@ -183,9 +183,10 @@ async fn publish_server(state: &State) -> Result<()> {
 	};
 	let post_req = surf::post(format!("{}/server/add_server", conf.auth_server))
 	.header("User-Agent", format!("R2Northstar/{}+dev", conf.version))
-		.body_json(&add_req).or_else(
+		.query(&add_req).or_else(
 			|err|{Err!(TitanfrontError::AddRequestErr(err))}
 		)?
+		.header("Content-Type", "text/plain")
 		.recv_json::<AddResponse>();
 	match post_req.await {
 		Ok(r) => {
@@ -213,9 +214,10 @@ async fn publish_server(state: &State) -> Result<()> {
 		};
 		let heartbeat_req = surf::post(format!("{}/server/heartbeat", conf.auth_server))
 			.header("User-Agent", format!("R2Northstar/{}+dev", conf.version))
-			.body_json(&heartbeat).or_else(
+			.query(&heartbeat).or_else(
 				|err|{Err!(TitanfrontError::AddRequestErr(err))}
 			)?
+			.header("Content-Type", "text/plain")
 			.recv_bytes();
 		match heartbeat_req.await {
 			Ok(r) => {},
