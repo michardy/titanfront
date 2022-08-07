@@ -10,7 +10,7 @@ edition = "2021"
 # Because most of the game forwarding is done in threads a lightweight one is used
 async-std = {version = "1.11.0", features = ["attributes"]}
 async-macros = "2.0.0"
-dashmap = "5.0.0"
+dashmap = "5.1.0"
 # HTTP server
 tide = "0.16.0"
 # HTTP client
