@@ -1,13 +1,11 @@
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 
 /// App
 // Modification of this object is not persisted
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AppConfig {
 	/// Server encryption key
 	pub key: Vec<u8>,
-	/// Server GCM tag encryption key
-	pub tag_key: Vec<u8>,
 	/// UDP interface and port Titanfront should expose
 	pub udp_address: SocketAddr,
 	/// HTTP interface and port Titanfront should expose
@@ -118,7 +116,12 @@ impl AppConfig {
 					match serv.into_str() {
 						Ok(s) => match s.parse() {
 							Ok(addr) => servers.push(addr),
-							Err(_) => panic!("Bad target address")
+							Err(_) => {
+								match s.to_socket_addrs() {
+									Ok(mut itr) => servers.push(itr.next().unwrap()),
+									Err(_) => panic!("Bad target address"),
+								}
+							}
 						},
 						Err(_) => {}
 					}
@@ -137,13 +140,6 @@ impl AppConfig {
 						.expect("Bad server key")
 				},
 				Err(_) => panic!("Did not specify server encryption key")
-			},
-			tag_key: match conf.get_str("tag_key") {
-				Ok(ks) => {
-					base64::decode(ks)
-						.expect("Bad tag key")
-				},
-				Err(_) => panic!("Did not specify server GCM tag encryption key")
 			},
 			udp_address: match conf.get_str("udp_address") {
 				Ok(saddr) => match saddr.parse() {

@@ -1,5 +1,6 @@
 use std::{net::{UdpSocket, ToSocketAddrs, SocketAddr}, hash::Hash, io};
 
+#[derive(Debug)]
 /// Hashable UDP socket
 pub struct TUdpSocket {
 	sock: UdpSocket,

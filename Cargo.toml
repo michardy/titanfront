@@ -18,7 +18,13 @@ surf = "2.3.2"
 base64 = "0.13.0"
 config = "0.11.0"
 # Used to decrypt game packets
-rust-crypto = "0.2.36"
+# By default this crate will use software implementations of both AES and the
+# POLYVAL universal hash function. When targeting modern x86/x86_64 CPUs, use
+# the following RUSTFLAGS to take advantage of high performance AES-NI and CLMUL
+# CPU intrinsics:
+# RUSTFLAGS="-Ctarget-cpu=sandybridge -Ctarget-feature=+aes,+sse2,+sse4.1,+ssse3"
+aes-gcm = "0.10.1"
+generic-array = "0.14.6"
 # Used for clock()
 libc = "0.2.117"
 env_logger = "0.9.0"
@@ -27,3 +33,4 @@ log = "0.4.14"
 serde = { version = "1.0", features = ["derive"] }
 anyhow = "1.0"
 thiserror = "1.0"
+rand = "0.8"

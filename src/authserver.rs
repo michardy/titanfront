@@ -1,3 +1,5 @@
+use async_macros::try_join;
+
 use crate::{
 	router::Router,
 	appconfig::AppConfig,
@@ -6,7 +8,6 @@ use crate::{
 };
 
 use {
-	async_macros::select,
 	serde::{
 		Deserialize,
 		Serialize
@@ -28,7 +29,7 @@ use std::{
 	time::Duration
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct State {
 	router: Router,
 	conf: AppConfig,
@@ -36,7 +37,7 @@ struct State {
 	server_id: Arc<RwLock<String>>
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 // These are northstar specified names provided as query parameters
 #[allow(non_snake_case)]
 // Some of these names are expected but currently unused
@@ -54,7 +55,7 @@ pub struct ConnectRequest {
 	password: Option<String>
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 // These are northstar specified names provided as query parameters
 #[allow(non_snake_case)]
 // Some of these names are expected but currently unused
@@ -72,7 +73,21 @@ pub struct AddRequest {
 	password: String
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
+// These are northstar specified names provided as query parameters
+#[allow(non_snake_case)]
+// Some of these names are expected but currently unused
+// Because they follow the northstar naming convention they cannot
+// be prefixed with _
+#[allow(dead_code)]
+pub struct RequestError {
+	// The field returned by northstar is a reserved word
+	#[serde(rename="enum")]
+	error_id: String,
+	msg: String
+}
+
+#[derive(Deserialize, Debug)]
 // These are northstar specified names provided as query parameters
 #[allow(non_snake_case)]
 // Some of these names are expected but currently unused
@@ -83,11 +98,10 @@ pub struct AddResponse {
 	success: bool,
 	id: Option<String>,
 	serverAuthToken: Option<String>,
-	// TODO: What is the type of error?
-	// error: Option<any>
+	error: Option<RequestError>
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 // These are northstar specified names provided as query parameters
 #[allow(non_snake_case)]
 // Some of these names are expected but currently unused
@@ -171,64 +185,76 @@ async fn publish_server(state: &State) -> Result<()> {
 			return Err!(TitanfrontError::AuthLiveErr(e));
 		}
 	}
-	let add_req = AddRequest {
-		port: conf.udp_address.port(),
-		authPort: conf.auth_address.port(),
-		name: conf.name.clone(),
-		description: conf.description.clone(),
-		map: String::from("????"),
-		playlist: String::from("????"),
-		maxPlayers: conf.player_count as u64,
-		password: conf.password.clone()
-	};
-	let post_req = surf::post(format!("{}/server/add_server", conf.auth_server))
-	.header("User-Agent", format!("R2Northstar/{}+dev", conf.version))
-		.query(&add_req).or_else(
-			|err|{Err!(TitanfrontError::AddRequestErr(err))}
-		)?
-		.header("Content-Type", "text/plain")
-		.recv_json::<AddResponse>();
-	match post_req.await {
-		Ok(r) => {
-			if r.success == true {
-				let mut auth = state.server_auth.write().unwrap();
-				*auth = r.serverAuthToken
-					.ok_or_else(||{TitanfrontError::NMSNoAuthErr()})?
-					.clone();
-				let mut id = state.server_id.write().unwrap();
-				*id = r.id
-					.ok_or_else(||{TitanfrontError::NMSNoIDErr()})?
-					.clone();
-			}
-		},
-		Err(e) => {
-			log::error!("NorthstarMasterServer issued bad response to registration");
-			return Err!(TitanfrontError::NMSResponseErr(e));
-		}
-	}
-	loop {
-		task::sleep(Duration::from_secs(5)).await;
-		let heartbeat = Heartbeat {
-			playerCount: state.router.get_player_count(),
-			id: state.server_id.read().unwrap().to_string()
+	if conf.auth_enabled {
+		let add_req = AddRequest {
+			port: conf.udp_address.port(),
+			authPort: conf.auth_address.port(),
+			name: conf.name.clone(),
+			description: conf.description.clone(),
+			map: String::from("????"),
+			playlist: String::from("????"),
+			maxPlayers: conf.player_count as u64,
+			password: conf.password.clone()
 		};
-		let heartbeat_req = surf::post(format!("{}/server/heartbeat", conf.auth_server))
-			.header("User-Agent", format!("R2Northstar/{}+dev", conf.version))
-			.query(&heartbeat).or_else(
+		let post_req = surf::post(format!("{}/server/add_server", conf.auth_server))
+		.header("User-Agent", format!("R2Northstar/{}", conf.version))
+			.query(&add_req).or_else(
 				|err|{Err!(TitanfrontError::AddRequestErr(err))}
 			)?
 			.header("Content-Type", "text/plain")
-			.recv_bytes();
-		match heartbeat_req.await {
-			Ok(r) => {},
+			.recv_json::<AddResponse>();
+		match post_req.await {
+			Ok(r) => {
+				if r.success == true {
+					println!("SERVER ID OBSERVED:{:?}", r.id);
+					let mut auth = state.server_auth.write().unwrap();
+					auth.clone_from(
+						&r.serverAuthToken
+							.ok_or_else(||{TitanfrontError::NMSNoAuthErr()})?
+					);
+					let mut id = state.server_id.write().unwrap();
+					id.clone_from(
+						&r.id
+							.ok_or_else(||{TitanfrontError::NMSNoIDErr()})?
+					);
+					println!("SERVER ID VAL 0:{:?}", id);
+				} else {
+					log::error!("Request failed:{:?}", r);
+					panic!("Could not add server");
+				}
+			},
 			Err(e) => {
-				log::error!("NorthstarMasterServer issued bad response to heartbeat");
+				log::error!("NorthstarMasterServer issued bad response to registration");
 				return Err!(TitanfrontError::NMSResponseErr(e));
 			}
 		}
+		println!("SERVER ID VAL 1:{:?}", state.server_id.read().unwrap());
+		loop {
+			task::sleep(Duration::from_secs(5)).await;
+			let heartbeat = Heartbeat {
+				playerCount: state.router.get_player_count(),
+				id: state.server_id.read().unwrap().to_string()
+			};
+			let heartbeat_req = surf::post(format!("{}/server/heartbeat", conf.auth_server))
+				.header("User-Agent", format!("R2Northstar/{}", conf.version))
+				.query(&heartbeat).or_else(
+					|err|{Err!(TitanfrontError::AddRequestErr(err))}
+				)?
+				.header("Content-Type", "text/plain")
+				.recv_bytes();
+			match heartbeat_req.await {
+				Ok(r) => {},
+				Err(e) => {
+					log::error!("NorthstarMasterServer issued bad response to heartbeat");
+					return Err!(TitanfrontError::NMSResponseErr(e));
+				}
+			}
+		}
+	} else {
+		Ok(())
 	}
 }
-async fn server_caller(server: Server<State>, conf: AppConfig) -> Result<()> {
+async fn server_caller(server: Server<State>, conf: &AppConfig) -> Result<()> {
 	server.listen(conf.auth_address).await.or_else(|err|{Err!(err)})
 }
 
@@ -249,7 +275,10 @@ pub async fn build_and_run(router: Router, conf: AppConfig) -> Result<()> {
 	let publish = publish_server(&state);
 
 	log::info!("Starting auth server");
-	let serv = server_caller(authserver, conf);
+	let serv = server_caller(authserver, &conf);
 
-	select!(publish, serv).await
+	match try_join!(publish, serv).await {
+		Ok(_) => Ok(()),
+		Err(e) => Err(e),
+	}
 }

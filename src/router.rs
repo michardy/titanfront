@@ -1,4 +1,6 @@
+use aes_gcm::AeadInPlace;
 use anyhow::{Context, Result};
+use rand::{thread_rng, Rng};
 
 use crate::{
 	tsock::{
@@ -15,20 +17,22 @@ use std::{
 	},
 	net::{
 		SocketAddr,
-		UdpSocket
-	}
+		UdpSocket, ToSocketAddrs, IpAddr
+	}, collections::HashSet
 };
 
 use {
-	crypto::{
-		aes_gcm::AesGcm,
-		aead::AeadDecryptor
+	aes_gcm::{
+		aead::{KeyInit},
+		Aes128Gcm, Nonce,
 	},
 	dashmap::DashMap,
 	ffi::clock
 };
 
 const PLAYER_CONNECT_MESSAGE: [u8; 13] = [0xFF, 0xFF, 0xFF, 0xFF, 0x48, 0x63, 0x6F, 0x6E, 0x6E, 0x65, 0x63, 0x74, 0x00];
+const CHALLENGE_AUTH_SERVER_MESSAGE: [u8; 9] = [0xFF, 0xFF, 0xFF, 0xFF, 0x49, 0x54, 0x74, 0x46, 0x72];
+const AAD: [u8;16] = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16];
 
 mod ffi {
 	extern {
@@ -37,24 +41,26 @@ mod ffi {
 }
 
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 enum ConnStat {
 	Connecting,
 	Authenticated,
 	Blocked
 }
 
+#[derive(Debug)]
 struct Bind {
 	status: ConnStat,
 	sock: TUdpSocket,
 	target: SocketAddr
 }
 
+#[derive(Debug)]
 struct PlayerInfo {
 
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Router {
 	/// Map auth tokens to user IDs to prevent spoofing
 	tokens: Arc<DashMap<String, u64>>,
@@ -74,17 +80,36 @@ pub struct Router {
 }
 
 fn decrypt(ctext: &Vec<u8>, config: &AppConfig) -> Vec<u8> {
-	let aad: Vec<u8> = Vec::new();
-	let mut out: Vec<u8> = vec![0; ctext[28..].len()];
-	// TODO: avoid regenerating GCM object every call to set nonce
-	let mut gcm = AesGcm::new(crypto::aes::KeySize::KeySize128, &config.key, &ctext[0..12], &aad);
-	// This needs to be cloned as the original ctext may be needed if the server is vanilla
-	let mut tag: Vec<u8> = Vec::from(&ctext[12..28]);
-	for i in 0..16 {
-		tag[i] ^= config.tag_key[i];
+	let key = generic_array::GenericArray::clone_from_slice(&config.key);
+	let tag = generic_array::GenericArray::clone_from_slice(&ctext[12..28]);
+	let mut ptext= Vec::new();
+	ptext.extend_from_slice(&ctext[28..]);
+	let cipher = Aes128Gcm::new(&key);
+	let nonce = Nonce::from_slice(&ctext[0..12]);
+	match cipher.decrypt_in_place_detached(nonce, &AAD, &mut ptext, &tag) {
+		Ok(_) => {},
+		Err(e) => {
+			// TODO: Break out some error types and stop dropping this
+			log::error!("bad decrypt: {:?}", e);
+		},
 	}
-	gcm.decrypt(&ctext[28..], &mut out, &mut tag);
-	out
+
+	ptext.to_vec()
+}
+
+fn encrypt(ptext: &[u8], config: &AppConfig) -> Vec<u8> {
+	let mut rng = thread_rng();
+	let nonce = rng.gen::<[u8;12]>();
+	let key = generic_array::GenericArray::clone_from_slice(&config.key);
+	let cipher = Aes128Gcm::new(&key);
+	let mut ctext: Vec<u8> = Vec::new();
+	ctext.extend_from_slice(ptext);
+	let tag = cipher.encrypt_in_place_detached(
+		&nonce.into(),
+		&AAD,
+		&mut ctext
+	).expect("Failed to encrypt own data"); // The source for this function cannot actually error
+	[&nonce[..], &tag, &ctext].concat()
 }
 
 impl Router {
@@ -239,11 +264,52 @@ impl Router {
 }
 
 pub fn external_handler(socket: UdpSocket, config: AppConfig, routecfg: Router) -> Result<()> {
+	let mut auth_ips: HashSet<IpAddr> = HashSet::new();
+	let auth_addr = config.auth_server
+		.replace("http://", "")
+		.replace("https://", "")
+		.replace("localhost", "127.0.0.1") // Localhost cannot be resolved
+		.split(":")
+		.collect::<Vec<&str>>()[0].to_owned();
+	log::info!("Creating special handler for auth server: {}", auth_addr);
+	match auth_addr.parse::<IpAddr>() {
+		Ok(ip) => {auth_ips.insert(ip);},
+		Err(e) => {
+			log::warn!("Error: {}", e);
+			for addr in config.auth_server.to_socket_addrs()
+				.expect("Could not derive auth server address") {
+					auth_ips.insert(addr.ip());
+				};
+		},
+	}
 	loop {
 		let mut buf: Vec<u8> = vec![0; config.receive_buf_size];
 		match socket.recv_from(&mut buf) {
 			Ok((rl, addr)) => {
 				routecfg.relay_external(&buf[..rl].to_vec(), &addr, &config);
+				if auth_ips.contains(&addr.ip()) {
+					let mut challenge = Vec::from(CHALLENGE_AUTH_SERVER_MESSAGE);
+
+					log::debug!("buf: {:?}", &buf[..rl]);
+					let ptext = decrypt(&buf[..rl].to_owned(), &config);
+					log::debug!("ptext: {:?}", ptext);
+					let uid = &mut ptext[13..21].to_owned();
+					log::debug!("uid: {:?}", uid);
+					challenge.append(uid);
+					let ctext = encrypt(
+						&challenge,
+						&config
+					);
+					match socket.send_to(&ctext, addr) {
+						Ok(_) => {
+							log::debug!("Response: {:?}", ctext);
+							log::info!("Responded to auth server UDP query")
+						},
+						Err(e) => {
+							log::warn!("Could not respond to auth server UDP query: {}", e)
+						},
+					}
+				}
 			},
 			Err(e) => {
 				log::error!("Issue receiving from external socket");
