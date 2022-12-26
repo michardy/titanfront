@@ -1,4 +1,5 @@
-use async_macros::try_join;
+use actix_web::dev::Server;
+use tokio::try_join;
 
 use crate::{
 	router::Router,
@@ -12,13 +13,22 @@ use {
 		Deserialize,
 		Serialize
 	},
+	actix_web::{
+		Responder,
+		get,
+		post,
+		web::{
+			Query,
+			Data
+		},
+		HttpServer,
+		App,
+		HttpResponse,
+		http::header::ContentType
+	},
 	surf::Url,
-	tide::{
-		Response,
-		Request,
-		Server},
-	async_std::task,
-	anyhow::Result
+	anyhow::Result,
+	tokio::time::{sleep, Duration}
 };
 
 use std::{
@@ -26,7 +36,6 @@ use std::{
 		RwLock,
 		Arc
 	},
-	time::Duration
 };
 
 #[derive(Clone, Debug)]
@@ -113,56 +122,43 @@ pub struct Heartbeat {
 	id: String
 }
 
-async fn verify(_req: Request<State>) -> tide::Result {
-	Ok(
-		Response::builder(200)
-			// This string is checked literally by the NorthstarMasterServer
-			.body("I am a northstar server!")
-			.header("X-Forwarded-By", "Titanfront")
-			.build()
-	)
+#[get("/verify")]
+async fn verify(_state: Data<State>) -> HttpResponse {
+	HttpResponse::Ok()
+		.insert_header(("X-Forwarded-By", "Titanfront"))
+		.body("I am a northstar server!")
 }
 
-async fn auth_incoming_player(req: Request<State>) -> tide::Result {
-	let state = req.state();
-	let con_req: ConnectRequest = req.query()?;
+#[post("/authenticate_incoming_player")]
+async fn auth_incoming_player(state: Data<State>, con_req: Query<ConnectRequest>) -> HttpResponse {
 	let conf = &state.conf;
 	// You can't seem to compare an RwGuard<String> with a String using !=
 	if state.server_auth.read().unwrap().ne(&con_req.serverAuthToken) {
-		return Ok(
-			Response::builder(403)
-				.body("{\"success\":false}")
-				.content_type("application/json")
-				.header("X-Forwarded-By", "Titanfront")
-				.build()
-		);
+		return HttpResponse::Forbidden()
+			.insert_header(("X-Forwarded-By", "Titanfront"))
+			.content_type("application/json")
+			.body("{\"success\":false}");
 	}
-	match state.router.add_token(con_req.authToken, con_req.id, &conf) {
+	match state.router.add_token(con_req.authToken.clone(), con_req.id, &conf) {
 		Ok(_) => {
-			Ok(
-				Response::builder(200)
-					.body("{\"success\":true}")
-					.content_type("application/json")
-					.header("X-Forwarded-By", "Titanfront")
-					.build()
-			)
+			return HttpResponse::Ok()
+				.insert_header(("X-Forwarded-By", "Titanfront"))
+				.content_type("application/json")
+				.body("{\"success\":true}");
 		},
 		Err(_) => {
-			Ok(
-				// Northstar appears to return 200s for failures
-				// HTTP status codes do not cleanly map 503 seems closest
-				Response::builder(503)
-					.body("{\"success\":false}")
-					.content_type("application/json")
-					.header("X-Forwarded-By", "Titanfront")
-					.build()
-			)
+			// Northstar appears to return 200s for failures
+			// HTTP status codes do not cleanly map 503 seems closest
+			return HttpResponse::ServiceUnavailable()
+				.insert_header(("X-Forwarded-By", "Titanfront"))
+				.content_type("application/json")
+				.body("{\"success\":false}");
 		}
 	}
 }
 
 async fn publish_server(state: &State) -> Result<()> {
-	task::sleep(Duration::from_secs(1)).await;
+	sleep(Duration::from_secs(1)).await;
 	let mut url = Url::parse("http://127.0.0.1:8081/verify").unwrap();
 	let conf = &state.conf;
 	match url.set_ip_host(conf.auth_address.ip()) {
@@ -228,9 +224,9 @@ async fn publish_server(state: &State) -> Result<()> {
 				return Err!(TitanfrontError::NMSResponseErr(e));
 			}
 		}
-		println!("SERVER ID VAL 1:{:?}", state.server_id.read().unwrap());
+		log::debug!("SERVER ID VAL 1:{:?}", state.server_id.read().unwrap());
 		loop {
-			task::sleep(Duration::from_secs(5)).await;
+			sleep(Duration::from_secs(5)).await;
 			let heartbeat = Heartbeat {
 				playerCount: state.router.get_player_count(),
 				id: state.server_id.read().unwrap().to_string()
@@ -254,8 +250,9 @@ async fn publish_server(state: &State) -> Result<()> {
 		Ok(())
 	}
 }
-async fn server_caller(server: Server<State>, conf: &AppConfig) -> Result<()> {
-	server.listen(conf.auth_address).await.or_else(|err|{Err!(err)})
+
+async fn server_caller(server: Server) -> Result<()> {
+	server.await.or_else(|err|{Err!(err)})
 }
 
 
@@ -268,16 +265,19 @@ pub async fn build_and_run(router: Router, conf: AppConfig) -> Result<()> {
 		server_id: Arc::new(RwLock::new(String::new())),
 		server_auth: Arc::new(RwLock::new(String::new()))
 	};
-	let mut authserver = tide::with_state(state.clone());
-	authserver.at("/verify").get(verify);
-	authserver.at("/authenticate_incoming_player").post(auth_incoming_player);
+	let authsv_state = state.clone();
+	let authserver = HttpServer::new(
+		move || App::new().app_data(Data::new(authsv_state.clone()))
+		.service(verify).service(auth_incoming_player))
+		.bind(conf.auth_address)?
+		.run();
 
+	let serv_caller = server_caller(authserver);
 	let publish = publish_server(&state);
 
 	log::info!("Starting auth server");
-	let serv = server_caller(authserver, &conf);
 
-	match try_join!(publish, serv).await {
+	match try_join!(publish, serv_caller) {
 		Ok(_) => Ok(()),
 		Err(e) => Err(e),
 	}

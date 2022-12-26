@@ -24,7 +24,7 @@ use std::{
 
 use anyhow::Result;
 
-#[async_std::main]
+#[tokio::main]
 async fn main() -> Result<()> {
 
 	env_logger::init();
