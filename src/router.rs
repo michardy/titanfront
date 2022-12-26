@@ -276,7 +276,8 @@ pub fn external_handler(socket: UdpSocket, config: AppConfig, routecfg: Router) 
 		Ok(ip) => {auth_ips.insert(ip);},
 		Err(e) => {
 			log::warn!("Error: {}", e);
-			for addr in config.auth_server.to_socket_addrs()
+			for addr in config.auth_server.replace("http://", "")
+				.replace("https://", "").to_socket_addrs()
 				.expect("Could not derive auth server address") {
 					auth_ips.insert(addr.ip());
 				};
