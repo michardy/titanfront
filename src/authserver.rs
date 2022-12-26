@@ -1,4 +1,5 @@
 use actix_web::dev::Server;
+use reqwest::multipart::{Form, Part};
 use tokio::try_join;
 
 use crate::{
@@ -14,7 +15,6 @@ use {
 		Serialize
 	},
 	actix_web::{
-		Responder,
 		get,
 		post,
 		web::{
@@ -24,9 +24,7 @@ use {
 		HttpServer,
 		App,
 		HttpResponse,
-		http::header::ContentType
 	},
-	surf::Url,
 	anyhow::Result,
 	tokio::time::{sleep, Duration}
 };
@@ -159,17 +157,11 @@ async fn auth_incoming_player(state: Data<State>, con_req: Query<ConnectRequest>
 
 async fn publish_server(state: &State) -> Result<()> {
 	sleep(Duration::from_secs(1)).await;
-	let mut url = Url::parse("http://127.0.0.1:8081/verify").unwrap();
 	let conf = &state.conf;
-	match url.set_ip_host(conf.auth_address.ip()) {
-		Ok(_) => {},
-		Err(_) => log::warn!("Attempt to set IP for liveness check failed. Falling back")
-	}
-	match url.set_port(Some(conf.auth_address.port())) {
-		Ok(_) => {},
-		Err(_) => log::warn!("Attempt to set port for liveness check failed. Falling back")
-	}
-	match surf::get(url).recv_string().await {
+	match reqwest::get(format!("http://{}/verify", conf.auth_address))
+		.await?
+		.text()
+	.await {
 		Ok(s) => {
 			if s != "I am a northstar server!" {
 				log::error!("Possible port contention");
@@ -192,13 +184,19 @@ async fn publish_server(state: &State) -> Result<()> {
 			maxPlayers: conf.player_count as u64,
 			password: conf.password.clone()
 		};
-		let post_req = surf::post(format!("{}/server/add_server", conf.auth_server))
+		let client = reqwest::Client::new();
+		let part = Part::text(conf.modinfo.clone())
+			.file_name("modinfo.json")
+			.mime_str("application/json")?;
+		let form = Form::new().part("modinfo", part);
+		let post_req = client.post(format!("{}/server/add_server", conf.auth_server))
 		.header("User-Agent", format!("R2Northstar/{}", conf.version))
-			.query(&add_req).or_else(
-				|err|{Err!(TitanfrontError::AddRequestErr(err))}
-			)?
+			.query(&add_req)
+			.multipart(form)
 			.header("Content-Type", "text/plain")
-			.recv_json::<AddResponse>();
+			.send()
+			.await?
+			.json::<AddResponse>();
 		match post_req.await {
 			Ok(r) => {
 				if r.success == true {
@@ -231,13 +229,19 @@ async fn publish_server(state: &State) -> Result<()> {
 				playerCount: state.router.get_player_count(),
 				id: state.server_id.read().unwrap().to_string()
 			};
-			let heartbeat_req = surf::post(format!("{}/server/heartbeat", conf.auth_server))
-				.header("User-Agent", format!("R2Northstar/{}", conf.version))
-				.query(&heartbeat).or_else(
-					|err|{Err!(TitanfrontError::AddRequestErr(err))}
-				)?
+			let client = reqwest::Client::new();
+			let part = Part::text(conf.modinfo.clone())
+				.file_name("modinfo.json")
+				.mime_str("application/json")?;
+			let form = Form::new().part("modinfo", part);
+			let heartbeat_req = client.post(format!("{}/server/heartbeat", conf.auth_server))
+			.header("User-Agent", format!("R2Northstar/{}", conf.version))
+				.query(&heartbeat)
+				.multipart(form)
 				.header("Content-Type", "text/plain")
-				.recv_bytes();
+				.send()
+				.await?
+				.text();
 			match heartbeat_req.await {
 				Ok(r) => {},
 				Err(e) => {

@@ -32,6 +32,7 @@ pub struct AppConfig {
 	pub password: String,
 	// TODO: derive this rather than setting it
 	pub version: String,
+	pub modinfo: String
 }
 
 impl AppConfig {
@@ -85,6 +86,13 @@ impl AppConfig {
 
 		conf
 			.set_default("version", "")
+			.unwrap();
+
+		conf
+			.set_default(
+				"modinfo",
+				r#"{"Mods":[{"Name":"Northstar.Custom","Version":"1.11.0","RequiredOnClient":true,"Pdiff":"// this is just an empty pdiff file so that if people roll back an update the pdiff file will be overwritten\n"}]}"#
+			)
 			.unwrap();
 
 		log::info!("Merging configuration");
@@ -196,6 +204,10 @@ impl AppConfig {
 			version: match conf.get_str("version") {
 				Ok(s) => s,
 				Err(_) => panic!("Version is not a string")
+			},
+			modinfo: match conf.get_str("modinfo") {
+				Ok(s) => s,
+				Err(_) => panic!("Modinfo is not a string")
 			},
 		}
 	}
