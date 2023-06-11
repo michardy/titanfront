@@ -137,15 +137,16 @@ impl Router {
 					ConnStat::Connecting => {
 						let plain = decrypt(payload, config);
 						let user_id = u64::from_le_bytes(plain[21..29].try_into().unwrap());
-						let i: usize = 29;
+						let mut uname_end: usize = 29;
 						// Iterate the username until we find a null terminator
 						for i in 29..payload.len() {
 							if payload[i] == 0 {
+								uname_end = i;
 								break;
 							}
 						}
 						// Best effort. If someone knows the charset file a bug
-						let user_name = String::from_utf8_lossy(&payload[29..i]);
+						let user_name = String::from_utf8_lossy(&payload[29..uname_end]);
 
 						if !config.auth_enabled {
 							log::info!("Unauthenticated connection from {}:{}", user_id, user_name);
@@ -155,7 +156,7 @@ impl Router {
 						}
 
 						// This is supposed to be hex. It had better work
-						let token = String::from_utf8_lossy(&payload[i..i + 31]);
+						let token = String::from_utf8_lossy(&payload[uname_end..uname_end + 31]);
 						// The Cow has to be dereferenced
 						match self.tokens.get(&*token) {
 							Some(kv) => {
