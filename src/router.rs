@@ -45,23 +45,23 @@ struct Bind {
 #[derive(Debug)]
 struct PlayerInfo {}
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Router {
 	/// Map auth tokens to user IDs to prevent spoofing
-	tokens: Arc<DashMap<String, u64>>,
+	tokens: DashMap<String, u64>,
 	/// Map of client addresses to relay sockets
-	ips: Arc<DashMap<SocketAddr, Bind>>,
+	ips: DashMap<SocketAddr, Bind>,
 	/// Allows return relay threads to find client
-	sockets: Arc<DashMap<TUdpSocket, SocketAddr>>,
+	sockets: DashMap<TUdpSocket, SocketAddr>,
 	// Dashmap is not really benchmarked for an update workload
 	// Others are fine but this may be slow
 	/// Socket use timestamps
 	/// Used to disconnect dead sessions
-	counters: Arc<DashMap<SocketAddr, libc::clock_t>>,
+	counters: DashMap<SocketAddr, libc::clock_t>,
 	// TODO: consider making non blocking
 	/// Available relay sockets
-	available: Arc<RwLock<Vec<TUdpSocket>>>,
-	players: Arc<DashMap<u64, PlayerInfo>>,
+	available: RwLock<Vec<TUdpSocket>>,
+	players: DashMap<u64, PlayerInfo>,
 }
 
 fn decrypt(ctext: &[u8], config: &AppConfig) -> Vec<u8> {
@@ -99,12 +99,12 @@ impl Router {
 	// There isn't any reason to convert to a
 	pub fn new(internal_sockets: &[TUdpSocket]) -> Router {
 		Router {
-			tokens: Arc::new(DashMap::new()),
-			ips: Arc::new(DashMap::new()),
-			sockets: Arc::new(DashMap::new()),
-			counters: Arc::new(DashMap::new()),
-			available: Arc::new(RwLock::new(internal_sockets.to_owned())),
-			players: Arc::new(DashMap::new()),
+			tokens: DashMap::new(),
+			ips: DashMap::new(),
+			sockets: DashMap::new(),
+			counters: DashMap::new(),
+			available: RwLock::new(internal_sockets.to_owned()),
+			players: DashMap::new(),
 		}
 	}
 	pub async fn add_token(&self, token: String, id: u64, conf: &AppConfig) -> Result<(), ()> {
@@ -214,13 +214,14 @@ impl Router {
 					{
 						// We can safely unwrap here because `available.len()` must be greater than 0
 						let sock = available.pop().unwrap();
-						sock.send_to(payload, config.target_servers[config.join_target]);
+						let target = config.target_servers[config.join_target];
+						sock.send_to(payload, target);
 						self.ips.insert(
 							*addr,
 							Bind {
 								status: ConnStat::Connecting,
 								sock: sock.clone(),
-								target: config.target_servers[config.join_target],
+								target,
 							},
 						);
 						self.sockets.insert(sock, *addr);
@@ -257,8 +258,8 @@ impl Router {
 
 pub async fn external_handler<'a>(
 	socket: TUdpSocket,
-	config: AppConfig,
-	routecfg: Router,
+	config: Arc<AppConfig>,
+	routecfg: Arc<Router>,
 ) -> Result<()> {
 	let mut auth_ips: HashSet<IpAddr> = HashSet::new();
 	let auth_addr = config
@@ -334,8 +335,8 @@ pub async fn external_handler<'a>(
 
 pub async fn internal_handler(
 	socket: TUdpSocket,
-	config: AppConfig,
-	routecfg: Router,
+	config: Arc<AppConfig>,
+	routecfg: Arc<Router>,
 	proxy: TUdpSocket,
 ) -> Result<()> {
 	loop {

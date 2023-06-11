@@ -2,7 +2,7 @@ use std::net::{SocketAddr, ToSocketAddrs};
 
 /// App
 // Modification of this object is not persisted
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct AppConfig {
 	/// Server encryption key
 	pub key: Vec<u8>,

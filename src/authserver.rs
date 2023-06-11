@@ -20,8 +20,8 @@ use std::sync::{Arc, RwLock};
 
 #[derive(Clone, Debug)]
 struct State {
-	router: Router,
-	conf: AppConfig,
+	router: Arc<Router>,
+	conf: Arc<AppConfig>,
 	server_auth: Arc<RwLock<String>>,
 	server_id: Arc<RwLock<String>>,
 }
@@ -247,7 +247,7 @@ async fn server_caller(server: Server) -> Result<()> {
 	server.await.or_else(|err| Err!(err))
 }
 
-pub async fn build_and_run(router: Router, conf: AppConfig) -> Result<()> {
+pub async fn build_and_run(router: Arc<Router>, conf: Arc<AppConfig>) -> Result<()> {
 	// Setup authserver
 	log::info!("Setting up auth server");
 	let state = State {

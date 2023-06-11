@@ -9,7 +9,7 @@ use crate::{
 	tsock::TUdpSocket,
 };
 
-use std::{panic, process};
+use std::{panic, process, sync::Arc};
 
 use anyhow::Result;
 
@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
 	}
 
 	log::info!("Create route tables");
-	let auth_tables = Router::new(&internal_sockets);
+	let auth_tables = Arc::new(Router::new(&internal_sockets));
 
 	let orig_hook = panic::take_hook();
 	panic::set_hook(Box::new(move |panic_info| {
@@ -43,9 +43,11 @@ async fn main() -> Result<()> {
 		process::exit(1);
 	}));
 
+	let conf_pointer = Arc::new(conf);
+
 	log::info!("Spawn server receive threads");
 	for s in internal_sockets {
-		let cfg = conf.clone();
+		let cfg = conf_pointer.clone();
 		let prxy = proxy_sock.clone();
 		let tables = auth_tables.clone();
 		tokio::spawn(async move {
@@ -57,7 +59,7 @@ async fn main() -> Result<()> {
 	}
 
 	log::info!("Spawn player receive threads");
-	let cfg = conf.clone();
+	let cfg = conf_pointer.clone();
 	let prxy = proxy_sock.clone();
 	let tables = auth_tables.clone();
 	tokio::spawn(async move {
@@ -67,5 +69,5 @@ async fn main() -> Result<()> {
 			.unwrap();
 	});
 
-	authserver::build_and_run(auth_tables, conf).await
+	authserver::build_and_run(auth_tables, conf_pointer.clone()).await
 }
