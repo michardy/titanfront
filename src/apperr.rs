@@ -13,15 +13,15 @@ macro_rules! Err {
 #[derive(Error, Debug)]
 pub enum TitanfrontError {
 	#[error("Port contention issue with auth server")]
-	AuthPortBindErr(),
+	AuthPortBind(),
 	#[error("Error checking auth server liveness: {0}")]
-	AuthLiveErr(reqwest::Error),
+	AuthLive(reqwest::Error),
 	#[error("NorthstarMasterServer did not send server auth token")]
-	NMSNoAuthErr(),
+	NMSNoAuth(),
 	#[error("NorthstarMasterServer did not send server id")]
-	NMSNoIDErr(),
+	NMSNoID(),
 	#[error("NorthstarMasterServer returned an error: {0}")]
-	NMSResponseErr(reqwest::Error),
+	NMSResponse(reqwest::Error),
 	#[error("Issue receiving UDP packets: {0}")]
-	SwitchReceiveErr(std::io::Error),
+	SwitchReceive(std::io::Error),
 }

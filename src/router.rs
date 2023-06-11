@@ -68,7 +68,7 @@ pub struct Router {
 	players: Arc<DashMap<u64, PlayerInfo>>,
 }
 
-fn decrypt(ctext: &Vec<u8>, config: &AppConfig) -> Vec<u8> {
+fn decrypt(ctext: &[u8], config: &AppConfig) -> Vec<u8> {
 	let key = generic_array::GenericArray::clone_from_slice(&config.key);
 	let tag = generic_array::GenericArray::clone_from_slice(&ctext[12..28]);
 	let mut ptext = Vec::new();
@@ -124,11 +124,11 @@ impl Router {
 		}
 	}
 	fn relay_external(&self, payload: &Vec<u8>, addr: &SocketAddr, config: &AppConfig) {
-		match self.ips.get_mut(&addr) {
+		match self.ips.get_mut(addr) {
 			Some(mut pair) => {
 				match pair.value().status {
 					ConnStat::Authenticated => {
-						pair.value().sock.send_to(&payload, pair.value().target);
+						pair.value().sock.send_to(payload, pair.value().target);
 						// Update the message relay clock
 						// Used to identify which players can be dropped for inactivity
 						self.counters.insert(*addr, unsafe { clock() });
@@ -139,6 +139,8 @@ impl Router {
 						let user_id = u64::from_le_bytes(plain[21..29].try_into().unwrap());
 						let mut uname_end: usize = 29;
 						// Iterate the username until we find a null terminator
+						// Clippy is wrong here the alternative is even longer
+						#[allow(clippy::needless_range_loop)]
 						for i in 29..payload.len() {
 							if payload[i] == 0 {
 								uname_end = i;
@@ -151,7 +153,7 @@ impl Router {
 						if !config.auth_enabled {
 							log::info!("Unauthenticated connection from {}:{}", user_id, user_name);
 							pair.value_mut().status = ConnStat::Authenticated;
-							pair.value().sock.send_to(&payload, pair.value().target);
+							pair.value().sock.send_to(payload, pair.value().target);
 							return;
 						}
 
@@ -167,7 +169,7 @@ impl Router {
 										user_name
 									);
 									pair.value_mut().status = ConnStat::Authenticated;
-									pair.value().sock.send_to(&payload, pair.value().target);
+									pair.value().sock.send_to(payload, pair.value().target);
 									return;
 								} else {
 									log::info!(
@@ -224,7 +226,7 @@ impl Router {
 					{
 						// We can safely unwrap here because `available.len()` must be greater than 0
 						let sock = available.pop().unwrap();
-						sock.send_to(&payload, config.target_servers[config.join_target]);
+						sock.send_to(payload, config.target_servers[config.join_target]);
 						self.ips.insert(
 							*addr,
 							Bind {
@@ -251,17 +253,14 @@ impl Router {
 		// TODO: clean up this removal
 		// It has to go outside the scope of the switch's borrow or it might race
 		// Alternatly use a struct that does not race so much
-		let kv = self.ips.remove(&addr);
+		let kv = self.ips.remove(addr);
 		// Check to make sure we are not deleting in use IPs
 		assert!(kv.unwrap().1.status == ConnStat::Blocked);
 	}
 
-	fn relay_internal(&self, payload: &Vec<u8>, sender: &TUdpSocket, proxy: &UdpSocket) {
-		match self.sockets.get(&sender) {
-			Some(pair) => {
-				proxy.send_to(&payload, pair.value());
-			}
-			None => {}
+	fn relay_internal(&self, payload: &[u8], sender: &TUdpSocket, proxy: &UdpSocket) {
+		if let Some(pair) = self.sockets.get(sender) {
+			proxy.send_to(payload, pair.value());
 		}
 	}
 
@@ -277,7 +276,7 @@ pub fn external_handler(socket: UdpSocket, config: AppConfig, routecfg: Router) 
         .replace("http://", "")
         .replace("https://", "")
         .replace("localhost", "127.0.0.1") // Localhost cannot be resolved
-        .split(":")
+        .split(':')
         .collect::<Vec<&str>>()[0]
 		.to_owned();
 	log::info!("Creating special handler for auth server: {}", auth_addr);
@@ -307,7 +306,7 @@ pub fn external_handler(socket: UdpSocket, config: AppConfig, routecfg: Router) 
 					let mut challenge = Vec::from(CHALLENGE_AUTH_SERVER_MESSAGE);
 
 					log::debug!("buf: {:?}", &buf[..rl]);
-					let ptext = decrypt(&buf[..rl].to_owned(), &config);
+					let ptext = decrypt(&buf[..rl], &config);
 					log::debug!("ptext: {:?}", ptext);
 					let uid = &mut ptext[13..21].to_owned();
 					log::debug!("uid: {:?}", uid);
@@ -326,7 +325,7 @@ pub fn external_handler(socket: UdpSocket, config: AppConfig, routecfg: Router) 
 			}
 			Err(e) => {
 				log::error!("Issue receiving from external socket");
-				return Err!(TitanfrontError::SwitchReceiveErr(e))
+				return Err!(TitanfrontError::SwitchReceive(e))
 					.context("Error receiving in external handler");
 			}
 		}
@@ -347,7 +346,7 @@ pub fn internal_handler(
 			}
 			Err(e) => {
 				log::error!("Issue receiving from internal socket");
-				return Err!(TitanfrontError::SwitchReceiveErr(e))
+				return Err!(TitanfrontError::SwitchReceive(e))
 					.context("Error receiving in internal handler");
 			}
 		}

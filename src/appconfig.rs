@@ -81,40 +81,32 @@ impl AppConfig {
 
 		log::info!("Building configuration struct");
 		let mut admins: Vec<u64> = Vec::new();
-		match conf.get_array("admins") {
-			Ok(ads) => {
-				for ad in ads {
-					match ad.into_str() {
-						Ok(s) => match s.parse::<u64>() {
-							Ok(u) => admins.push(u),
-							Err(_) => panic!("Bad admin ID number"),
-						},
-						Err(_) => {}
+		if let Ok(ads) = conf.get_array("admins") {
+			for ad in ads {
+				if let Ok(s) = ad.into_str() {
+					match s.parse::<u64>() {
+						Ok(u) => admins.push(u),
+						Err(_) => panic!("Bad admin ID number"),
 					}
 				}
 			}
-			Err(_) => {}
 		}
 
 		let mut servers: Vec<SocketAddr> = Vec::new();
-		match conf.get_array("target_servers") {
-			Ok(servs) => {
-				for serv in servs {
-					match serv.into_str() {
-						Ok(s) => match s.parse() {
-							Ok(addr) => servers.push(addr),
-							Err(_) => match s.to_socket_addrs() {
-								Ok(mut itr) => servers.push(itr.next().unwrap()),
-								Err(_) => panic!("Bad target address"),
-							},
+		if let Ok(servs) = conf.get_array("target_servers") {
+			for serv in servs {
+				if let Ok(s) = serv.into_str() {
+					match s.parse() {
+						Ok(addr) => servers.push(addr),
+						Err(_) => match s.to_socket_addrs() {
+							Ok(mut itr) => servers.push(itr.next().unwrap()),
+							Err(_) => panic!("Bad target address"),
 						},
-						Err(_) => {}
 					}
 				}
 			}
-			Err(_) => {}
 		}
-		if servers.len() == 0 {
+		if servers.is_empty() {
 			panic!("No target servers to proxy")
 		}
 

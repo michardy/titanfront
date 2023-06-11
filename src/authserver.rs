@@ -126,7 +126,7 @@ async fn auth_incoming_player(state: Data<State>, con_req: Query<ConnectRequest>
 	}
 	match state
 		.router
-		.add_token(con_req.authToken.clone(), con_req.id, &conf)
+		.add_token(con_req.authToken.clone(), con_req.id, conf)
 	{
 		Ok(_) => {
 			return HttpResponse::Ok()
@@ -156,12 +156,12 @@ async fn publish_server(state: &State) -> Result<()> {
 		Ok(s) => {
 			if s != "I am a northstar server!" {
 				log::error!("Possible port contention");
-				return Err!(TitanfrontError::AuthPortBindErr());
+				return Err!(TitanfrontError::AuthPortBind());
 			}
 		}
 		Err(e) => {
 			log::error!("Liveness check failed");
-			return Err!(TitanfrontError::AuthLiveErr(e));
+			return Err!(TitanfrontError::AuthLive(e));
 		}
 	}
 	if conf.auth_enabled {
@@ -191,15 +191,12 @@ async fn publish_server(state: &State) -> Result<()> {
 			.json::<AddResponse>();
 		match post_req.await {
 			Ok(r) => {
-				if r.success == true {
+				if r.success {
 					println!("SERVER ID OBSERVED:{:?}", r.id);
 					let mut auth = state.server_auth.write().unwrap();
-					auth.clone_from(
-						&r.serverAuthToken
-							.ok_or_else(|| TitanfrontError::NMSNoAuthErr())?,
-					);
+					auth.clone_from(&r.serverAuthToken.ok_or_else(TitanfrontError::NMSNoAuth)?);
 					let mut id = state.server_id.write().unwrap();
-					id.clone_from(&r.id.ok_or_else(|| TitanfrontError::NMSNoIDErr())?);
+					id.clone_from(&r.id.ok_or_else(TitanfrontError::NMSNoID)?);
 					println!("SERVER ID VAL 0:{:?}", id);
 				} else {
 					log::error!("Request failed:{:?}", r);
@@ -208,7 +205,7 @@ async fn publish_server(state: &State) -> Result<()> {
 			}
 			Err(e) => {
 				log::error!("NorthstarMasterServer issued bad response to registration");
-				return Err!(TitanfrontError::NMSResponseErr(e));
+				return Err!(TitanfrontError::NMSResponse(e));
 			}
 		}
 		log::debug!("SERVER ID VAL 1:{:?}", state.server_id.read().unwrap());
@@ -233,10 +230,10 @@ async fn publish_server(state: &State) -> Result<()> {
 				.await?
 				.text();
 			match heartbeat_req.await {
-				Ok(r) => {}
+				Ok(_r) => {}
 				Err(e) => {
 					log::error!("NorthstarMasterServer issued bad response to heartbeat");
-					return Err!(TitanfrontError::NMSResponseErr(e));
+					return Err!(TitanfrontError::NMSResponse(e));
 				}
 			}
 		}
