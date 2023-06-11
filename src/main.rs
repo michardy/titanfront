@@ -9,7 +9,7 @@ use crate::{
 	tsock::TUdpSocket,
 };
 
-use std::{net::UdpSocket, panic, process, thread};
+use std::{panic, process};
 
 use anyhow::Result;
 
@@ -22,12 +22,14 @@ async fn main() -> Result<()> {
 
 	log::info!("Create UDP sockets");
 	// Setup UDP relaying sockets
-	let proxy_sock = UdpSocket::bind(conf.udp_address)?;
+	let proxy_sock = TUdpSocket::bind(conf.udp_address, usize::MAX).await?;
 	let mut internal_sockets: Vec<TUdpSocket> = Vec::with_capacity(16);
 	log::info!("Binding UDP sockets");
 	for i in 0..conf.player_count + conf.admins.len() {
 		internal_sockets.push(
-			TUdpSocket::bind(&conf.relay_address, i).expect("Failed to create internal socket"),
+			TUdpSocket::bind(&conf.relay_address, i)
+				.await
+				.expect("Failed to create internal socket"),
 		);
 	}
 
@@ -44,10 +46,10 @@ async fn main() -> Result<()> {
 	log::info!("Spawn server receive threads");
 	for s in internal_sockets {
 		let cfg = conf.clone();
-		let prxy = proxy_sock.try_clone().unwrap();
+		let prxy = proxy_sock.clone();
 		let tables = auth_tables.clone();
-		thread::spawn(|| {
-			internal_handler(s, cfg, tables, prxy)
+		tokio::spawn(async move {
+			internal_handler(s, cfg, tables, prxy).await
                 // Thread errors cannot propagate back to the main thread
                 // If they are unhandled by now they are fatal errors
                 .unwrap();
@@ -55,18 +57,15 @@ async fn main() -> Result<()> {
 	}
 
 	log::info!("Spawn player receive threads");
-	for _ in 0..conf.player_count + conf.admins.len() {
-		// Yes, clones are expensive but this is fixed startup cost
-		let cfg = conf.clone();
-		let prxy = proxy_sock.try_clone().unwrap();
-		let tables = auth_tables.clone();
-		thread::spawn(|| {
-			external_handler(prxy, cfg, tables)
-                // Thread errors cannot propagate back to the main thread
-                // If they are unhandled by now they are fatal errors
-                .unwrap();
-		});
-	}
+	let cfg = conf.clone();
+	let prxy = proxy_sock.clone();
+	let tables = auth_tables.clone();
+	tokio::spawn(async move {
+		external_handler(prxy, cfg, tables).await
+			// Thread errors cannot propagate back to the main thread
+			// If they are unhandled by now they are fatal errors
+			.unwrap();
+	});
 
 	authserver::build_and_run(auth_tables, conf).await
 }

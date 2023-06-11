@@ -1,14 +1,9 @@
-use crate::{
-	appconfig::AppConfig,
-	apperr::TitanfrontError,
-	tsock::{TUdpSocket, TryClone},
-	Err,
-};
+use crate::{appconfig::AppConfig, apperr::TitanfrontError, tsock::TUdpSocket, Err};
 
 use std::{
 	collections::HashSet,
-	net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket},
-	sync::{Arc, RwLock},
+	net::{IpAddr, SocketAddr, ToSocketAddrs},
+	sync::Arc,
 };
 
 use {
@@ -17,6 +12,7 @@ use {
 	dashmap::DashMap,
 	ffi::clock,
 	rand::{thread_rng, Rng},
+	tokio::sync::RwLock,
 };
 
 const PLAYER_CONNECT_MESSAGE: [u8; 13] = [
@@ -100,22 +96,19 @@ fn encrypt(ptext: &[u8], config: &AppConfig) -> Vec<u8> {
 }
 
 impl Router {
-	pub fn new(internal_sockets: &Vec<TUdpSocket>) -> Router {
+	// There isn't any reason to convert to a
+	pub fn new(internal_sockets: &[TUdpSocket]) -> Router {
 		Router {
 			tokens: Arc::new(DashMap::new()),
 			ips: Arc::new(DashMap::new()),
 			sockets: Arc::new(DashMap::new()),
 			counters: Arc::new(DashMap::new()),
-			available: Arc::new(RwLock::new(
-				internal_sockets
-					.try_clone()
-					.expect("Failed to clone internal sockets for route table"),
-			)),
+			available: Arc::new(RwLock::new(internal_sockets.to_owned())),
 			players: Arc::new(DashMap::new()),
 		}
 	}
-	pub fn add_token(&self, token: String, id: u64, conf: &AppConfig) -> Result<(), ()> {
-		let avail = self.available.read().expect("Poisoned socket list");
+	pub async fn add_token(&self, token: String, id: u64, conf: &AppConfig) -> Result<(), ()> {
+		let avail = self.available.read().await;
 		if avail.len() - conf.admins.len() > 0 {
 			self.tokens.insert(token, id);
 			Ok(())
@@ -123,7 +116,7 @@ impl Router {
 			Err(())
 		}
 	}
-	fn relay_external(&self, payload: &Vec<u8>, addr: &SocketAddr, config: &AppConfig) {
+	async fn relay_external(&self, payload: &Vec<u8>, addr: &SocketAddr, config: &AppConfig) {
 		match self.ips.get_mut(addr) {
 			Some(mut pair) => {
 				match pair.value().status {
@@ -191,12 +184,7 @@ impl Router {
 								);
 								pair.value_mut().status = ConnStat::Blocked;
 								self.sockets.remove(&pair.value().sock);
-								self.available.write().unwrap().push(
-									pair.value()
-										.sock
-										.try_clone()
-										.expect("Failed to clone socket for reassignment"),
-								);
+								self.available.write().await.push(pair.value().sock.clone());
 							}
 						}
 					}
@@ -212,13 +200,13 @@ impl Router {
 				{
 					// Explicit lifetime of read
 					// We use unwrap because it only errors on panic
-					if (self.available.read().unwrap()).len() == 0 {
+					if (self.available.read().await).len() == 0 {
 						return;
 					}
 				}
 				let plain = decrypt(payload, config);
 				if plain.as_slice()[..13] == PLAYER_CONNECT_MESSAGE {
-					let mut available = self.available.write().unwrap();
+					let mut available = self.available.write().await;
 					let user_id = u64::from_le_bytes(plain[13..21].try_into().unwrap());
 					if (available.len() > config.admins.len()
 						&& self.players.contains_key(&user_id))
@@ -231,9 +219,7 @@ impl Router {
 							*addr,
 							Bind {
 								status: ConnStat::Connecting,
-								sock: sock
-									.try_clone()
-									.expect("Error cloning socket into ip table"),
+								sock: sock.clone(),
 								target: config.target_servers[config.join_target],
 							},
 						);
@@ -258,7 +244,7 @@ impl Router {
 		assert!(kv.unwrap().1.status == ConnStat::Blocked);
 	}
 
-	fn relay_internal(&self, payload: &[u8], sender: &TUdpSocket, proxy: &UdpSocket) {
+	fn relay_internal(&self, payload: &[u8], sender: &TUdpSocket, proxy: &TUdpSocket) {
 		if let Some(pair) = self.sockets.get(sender) {
 			proxy.send_to(payload, pair.value());
 		}
@@ -269,7 +255,11 @@ impl Router {
 	}
 }
 
-pub fn external_handler(socket: UdpSocket, config: AppConfig, routecfg: Router) -> Result<()> {
+pub async fn external_handler<'a>(
+	socket: TUdpSocket,
+	config: AppConfig,
+	routecfg: Router,
+) -> Result<()> {
 	let mut auth_ips: HashSet<IpAddr> = HashSet::new();
 	let auth_addr = config
         .auth_server
@@ -297,31 +287,41 @@ pub fn external_handler(socket: UdpSocket, config: AppConfig, routecfg: Router) 
 			}
 		}
 	}
+
+	let auth_ips_pointer = Arc::new(auth_ips);
+	let router_pointer = Arc::new(routecfg);
 	loop {
 		let mut buf: Vec<u8> = vec![0; config.receive_buf_size];
-		match socket.recv_from(&mut buf) {
+		match socket.recv_from(&mut buf).await {
 			Ok((rl, addr)) => {
-				routecfg.relay_external(&buf[..rl].to_vec(), &addr, &config);
-				if auth_ips.contains(&addr.ip()) {
-					let mut challenge = Vec::from(CHALLENGE_AUTH_SERVER_MESSAGE);
+				let cnf = config.clone();
+				let msg = buf.clone();
+				let insoc = socket.clone();
+				let auth_server_ips = auth_ips_pointer.clone();
+				let router = router_pointer.clone();
+				tokio::spawn(async move {
+					router.relay_external(&msg[..rl].to_vec(), &addr, &cnf);
+					if auth_server_ips.clone().contains(&addr.ip()) {
+						let mut challenge = Vec::from(CHALLENGE_AUTH_SERVER_MESSAGE);
 
-					log::debug!("buf: {:?}", &buf[..rl]);
-					let ptext = decrypt(&buf[..rl], &config);
-					log::debug!("ptext: {:?}", ptext);
-					let uid = &mut ptext[13..21].to_owned();
-					log::debug!("uid: {:?}", uid);
-					challenge.append(uid);
-					let ctext = encrypt(&challenge, &config);
-					match socket.send_to(&ctext, addr) {
-						Ok(_) => {
-							log::debug!("Response: {:?}", ctext);
-							log::info!("Responded to auth server UDP query")
-						}
-						Err(e) => {
-							log::warn!("Could not respond to auth server UDP query: {}", e)
+						log::debug!("buf: {:?}", &msg[..rl]);
+						let ptext = decrypt(&msg[..rl], &cnf);
+						log::debug!("ptext: {:?}", ptext);
+						let uid = &mut ptext[13..21].to_owned();
+						log::debug!("uid: {:?}", uid);
+						challenge.append(uid);
+						let ctext = encrypt(&challenge, &cnf);
+						match insoc.send_to(&ctext, addr).await {
+							Ok(_) => {
+								log::debug!("Response: {:?}", ctext);
+								log::info!("Responded to auth server UDP query");
+							}
+							Err(e) => {
+								log::warn!("Could not respond to auth server UDP query: {}", e);
+							}
 						}
 					}
-				}
+				});
 			}
 			Err(e) => {
 				log::error!("Issue receiving from external socket");
@@ -332,17 +332,17 @@ pub fn external_handler(socket: UdpSocket, config: AppConfig, routecfg: Router) 
 	}
 }
 
-pub fn internal_handler(
+pub async fn internal_handler(
 	socket: TUdpSocket,
 	config: AppConfig,
 	routecfg: Router,
-	proxy: UdpSocket,
+	proxy: TUdpSocket,
 ) -> Result<()> {
 	loop {
 		let mut buf: Vec<u8> = vec![0; config.receive_buf_size];
-		match socket.recv_from(&mut buf) {
+		match socket.recv_from(&mut buf).await {
 			Ok((rl, _)) => {
-				routecfg.relay_internal(&buf[..rl].to_vec(), &socket, &proxy);
+				routecfg.relay_internal(&buf[..rl], &socket, &proxy);
 			}
 			Err(e) => {
 				log::error!("Issue receiving from internal socket");

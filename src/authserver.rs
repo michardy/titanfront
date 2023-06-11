@@ -127,6 +127,7 @@ async fn auth_incoming_player(state: Data<State>, con_req: Query<ConnectRequest>
 	match state
 		.router
 		.add_token(con_req.authToken.clone(), con_req.id, conf)
+		.await
 	{
 		Ok(_) => {
 			return HttpResponse::Ok()
