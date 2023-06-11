@@ -32,7 +32,7 @@ pub struct AppConfig {
 	pub password: String,
 	// TODO: derive this rather than setting it
 	pub version: String,
-	pub modinfo: String
+	pub modinfo: String,
 }
 
 impl AppConfig {
@@ -40,53 +40,31 @@ impl AppConfig {
 		let mut conf = config::Config::default();
 
 		log::info!("Setting defaults");
-		conf
-			.set_default("udp_address", "0.0.0.0:37015")
+		conf.set_default("udp_address", "0.0.0.0:37015").unwrap();
+
+		conf.set_default("auth_address", "0.0.0.0:8081").unwrap();
+
+		conf.set_default("relay_address", "0.0.0.0:0").unwrap();
+
+		conf.set_default("player_count", 16).unwrap();
+
+		conf.set_default("receive_buf_size", 2048).unwrap();
+
+		conf.set_default("join_target", 0).unwrap();
+
+		conf.set_default("auth_enabled", true).unwrap();
+
+		conf.set_default("auth_server", "https://northstar.tf")
 			.unwrap();
 
-		conf
-			.set_default("auth_address", "0.0.0.0:8081")
+		conf.set_default("name", "Titanfront server").unwrap();
+
+		conf.set_default("description", "Titanfront server")
 			.unwrap();
 
-		conf
-			.set_default("relay_address", "0.0.0.0:0")
-			.unwrap();
+		conf.set_default("password", "").unwrap();
 
-		conf
-			.set_default("player_count", 16)
-			.unwrap();
-
-		conf
-			.set_default("receive_buf_size", 2048)
-			.unwrap();
-
-		conf
-			.set_default("join_target", 0)
-			.unwrap();
-
-		conf
-			.set_default("auth_enabled", true)
-			.unwrap();
-
-		conf
-			.set_default("auth_server", "https://northstar.tf")
-			.unwrap();
-
-		conf
-			.set_default("name", "Titanfront server")
-			.unwrap();
-
-		conf
-			.set_default("description", "Titanfront server")
-			.unwrap();
-
-		conf
-			.set_default("password", "")
-			.unwrap();
-
-		conf
-			.set_default("version", "")
-			.unwrap();
+		conf.set_default("version", "").unwrap();
 
 		conf
 			.set_default(
@@ -96,9 +74,10 @@ impl AppConfig {
 			.unwrap();
 
 		log::info!("Merging configuration");
-		conf
-			.merge(config::File::with_name("Titanfront")).unwrap()
-			.merge(config::Environment::with_prefix("Titanfront")).unwrap();
+		conf.merge(config::File::with_name("Titanfront"))
+			.unwrap()
+			.merge(config::Environment::with_prefix("Titanfront"))
+			.unwrap();
 
 		log::info!("Building configuration struct");
 		let mut admins: Vec<u64> = Vec::new();
@@ -113,7 +92,7 @@ impl AppConfig {
 						Err(_) => {}
 					}
 				}
-			},
+			}
 			Err(_) => {}
 		}
 
@@ -124,90 +103,85 @@ impl AppConfig {
 					match serv.into_str() {
 						Ok(s) => match s.parse() {
 							Ok(addr) => servers.push(addr),
-							Err(_) => {
-								match s.to_socket_addrs() {
-									Ok(mut itr) => servers.push(itr.next().unwrap()),
-									Err(_) => panic!("Bad target address"),
-								}
-							}
+							Err(_) => match s.to_socket_addrs() {
+								Ok(mut itr) => servers.push(itr.next().unwrap()),
+								Err(_) => panic!("Bad target address"),
+							},
 						},
 						Err(_) => {}
 					}
 				}
-			},
+			}
 			Err(_) => {}
 		}
 		if servers.len() == 0 {
 			panic!("No target servers to proxy")
 		}
-		
+
 		AppConfig {
 			key: match conf.get_str("key") {
-				Ok(ks) => {
-					base64::decode(ks)
-						.expect("Bad server key")
-				},
-				Err(_) => panic!("Did not specify server encryption key")
+				Ok(ks) => base64::decode(ks).expect("Bad server key"),
+				Err(_) => panic!("Did not specify server encryption key"),
 			},
 			udp_address: match conf.get_str("udp_address") {
 				Ok(saddr) => match saddr.parse() {
 					Ok(addr) => addr,
 					Err(_) => panic!("Bad udp address"),
 				},
-				Err(_) => panic!("Bad udp address")
+				Err(_) => panic!("Bad udp address"),
 			},
 			auth_address: match conf.get_str("auth_address") {
 				Ok(saddr) => match saddr.parse() {
 					Ok(addr) => addr,
 					Err(_) => panic!("Bad auth address"),
 				},
-				Err(_) => panic!("Bad auth address")
+				Err(_) => panic!("Bad auth address"),
 			},
 			relay_address: match conf.get_str("relay_address") {
 				Ok(saddr) => saddr,
-				Err(_) => panic!("Bad relay address")
+				Err(_) => panic!("Bad relay address"),
 			},
 			player_count: match conf.get_int("player_count") {
 				Ok(p) => p as usize,
-				Err(_) => panic!("Player number is not an int")
+				Err(_) => panic!("Player number is not an int"),
 			},
 			receive_buf_size: match conf.get_int("receive_buf_size") {
 				Ok(s) => s as usize,
-				Err(_) => panic!("Buffer size is not an int")
+				Err(_) => panic!("Buffer size is not an int"),
 			},
-			admins: admins,
+			admins,
 			target_servers: servers,
 			join_target: match conf.get_int("join_target") {
 				Ok(t) => t as usize,
-				Err(_) => panic!("Join target is not an int")
+				Err(_) => panic!("Join target is not an int"),
 			},
 			auth_enabled: match conf.get_bool("auth_enabled") {
 				Ok(b) => b,
-				Err(_) => panic!("Auth enabled is not a boolean value")
+				Err(_) => panic!("Auth enabled is not a boolean value"),
 			},
 			auth_server: match conf.get_str("auth_server") {
 				Ok(s) => s,
-				Err(_) => panic!("Auth server is not a string")
+				Err(_) => panic!("Auth server is not a string"),
 			},
 			name: match conf.get_str("name") {
 				Ok(s) => s,
-				Err(_) => panic!("Name is not a string")
+				Err(_) => panic!("Name is not a string"),
 			},
 			description: match conf.get_str("description") {
 				Ok(s) => s,
-				Err(_) => panic!("Description is not a string")
+				Err(_) => panic!("Description is not a string"),
 			},
 			password: match conf.get_str("password") {
 				Ok(s) => s,
-				Err(_) => panic!("Password is not a string")
+				Err(_) => panic!("Password is not a string"),
 			},
 			version: match conf.get_str("version") {
 				Ok(s) => s,
-				Err(_) => panic!("Version is not a string")
+				Err(_) => panic!("Version is not a string"),
 			},
 			modinfo: match conf.get_str("modinfo") {
 				Ok(s) => s,
-				Err(_) => panic!("Modinfo is not a string")
+				Err(_) => panic!("Modinfo is not a string"),
 			},
 		}
 	}

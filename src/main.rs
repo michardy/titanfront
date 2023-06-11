@@ -1,32 +1,20 @@
 mod appconfig;
-mod tsock;
+mod apperr;
 mod authserver;
 mod router;
-mod apperr;
+mod tsock;
 
 use crate::{
+	router::{external_handler, internal_handler, Router},
 	tsock::TUdpSocket,
-	router::{
-		Router,
-		external_handler,
-		internal_handler
-	},
 };
 
-use std::{
-	net::{
-		UdpSocket
-	},
-	thread,
-	panic,
-	process
-};
+use std::{net::UdpSocket, panic, process, thread};
 
 use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-
 	env_logger::init();
 
 	log::info!("Parsing config");
@@ -37,10 +25,9 @@ async fn main() -> Result<()> {
 	let proxy_sock = UdpSocket::bind(conf.udp_address)?;
 	let mut internal_sockets: Vec<TUdpSocket> = Vec::with_capacity(16);
 	log::info!("Binding UDP sockets");
-	for i in 0..conf.player_count+conf.admins.len() {
+	for i in 0..conf.player_count + conf.admins.len() {
 		internal_sockets.push(
-			TUdpSocket::bind(&conf.relay_address, i)
-				.expect("Failed to create internal socket")
+			TUdpSocket::bind(&conf.relay_address, i).expect("Failed to create internal socket"),
 		);
 	}
 
@@ -48,11 +35,11 @@ async fn main() -> Result<()> {
 	let auth_tables = Router::new(&internal_sockets);
 
 	let orig_hook = panic::take_hook();
-    panic::set_hook(Box::new(move |panic_info| {
-        // invoke the default handler and exit the process
-        orig_hook(panic_info);
-        process::exit(1);
-    }));
+	panic::set_hook(Box::new(move |panic_info| {
+		// invoke the default handler and exit the process
+		orig_hook(panic_info);
+		process::exit(1);
+	}));
 
 	log::info!("Spawn server receive threads");
 	for s in internal_sockets {
@@ -61,23 +48,23 @@ async fn main() -> Result<()> {
 		let tables = auth_tables.clone();
 		thread::spawn(|| {
 			internal_handler(s, cfg, tables, prxy)
-				// Thread errors cannot propagate back to the main thread
-				// If they are unhandled by now they are fatal errors
-				.unwrap();
+                // Thread errors cannot propagate back to the main thread
+                // If they are unhandled by now they are fatal errors
+                .unwrap();
 		});
 	}
 
 	log::info!("Spawn player receive threads");
-	for _ in 0..conf.player_count+conf.admins.len() {
+	for _ in 0..conf.player_count + conf.admins.len() {
 		// Yes, clones are expensive but this is fixed startup cost
 		let cfg = conf.clone();
 		let prxy = proxy_sock.try_clone().unwrap();
 		let tables = auth_tables.clone();
 		thread::spawn(|| {
 			external_handler(prxy, cfg, tables)
-				// Thread errors cannot propagate back to the main thread
-				// If they are unhandled by now they are fatal errors
-				.unwrap();
+                // Thread errors cannot propagate back to the main thread
+                // If they are unhandled by now they are fatal errors
+                .unwrap();
 		});
 	}
 

@@ -1,47 +1,29 @@
-use actix_web::dev::Server;
-use reqwest::multipart::{Form, Part};
-use tokio::try_join;
-
-use crate::{
-	router::Router,
-	appconfig::AppConfig,
-	apperr::TitanfrontError,
-	Err
-};
+use crate::{appconfig::AppConfig, apperr::TitanfrontError, router::Router, Err};
 
 use {
-	serde::{
-		Deserialize,
-		Serialize
-	},
 	actix_web::{
-		get,
-		post,
-		web::{
-			Query,
-			Data
-		},
-		HttpServer,
-		App,
-		HttpResponse,
+		dev::Server,
+		get, post,
+		web::{Data, Query},
+		App, HttpResponse, HttpServer,
 	},
 	anyhow::Result,
-	tokio::time::{sleep, Duration}
-};
-
-use std::{
-	sync::{
-		RwLock,
-		Arc
+	reqwest::multipart::{Form, Part},
+	serde::{Deserialize, Serialize},
+	tokio::{
+		time::{sleep, Duration},
+		try_join,
 	},
 };
+
+use std::sync::{Arc, RwLock};
 
 #[derive(Clone, Debug)]
 struct State {
 	router: Router,
 	conf: AppConfig,
 	server_auth: Arc<RwLock<String>>,
-	server_id: Arc<RwLock<String>>
+	server_id: Arc<RwLock<String>>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -59,7 +41,7 @@ pub struct ConnectRequest {
 	/// Token to authenticate NorthstarMasterServer instance
 	serverAuthToken: String,
 	username: String,
-	password: Option<String>
+	password: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -77,7 +59,7 @@ pub struct AddRequest {
 	map: String,
 	playlist: String,
 	maxPlayers: u64,
-	password: String
+	password: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -89,9 +71,9 @@ pub struct AddRequest {
 #[allow(dead_code)]
 pub struct RequestError {
 	// The field returned by northstar is a reserved word
-	#[serde(rename="enum")]
+	#[serde(rename = "enum")]
 	error_id: String,
-	msg: String
+	msg: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -105,7 +87,7 @@ pub struct AddResponse {
 	success: bool,
 	id: Option<String>,
 	serverAuthToken: Option<String>,
-	error: Option<RequestError>
+	error: Option<RequestError>,
 }
 
 #[derive(Serialize, Debug)]
@@ -117,7 +99,7 @@ pub struct AddResponse {
 #[allow(dead_code)]
 pub struct Heartbeat {
 	playerCount: u64,
-	id: String
+	id: String,
 }
 
 #[get("/verify")]
@@ -131,19 +113,27 @@ async fn verify(_state: Data<State>) -> HttpResponse {
 async fn auth_incoming_player(state: Data<State>, con_req: Query<ConnectRequest>) -> HttpResponse {
 	let conf = &state.conf;
 	// You can't seem to compare an RwGuard<String> with a String using !=
-	if state.server_auth.read().unwrap().ne(&con_req.serverAuthToken) {
+	if state
+		.server_auth
+		.read()
+		.unwrap()
+		.ne(&con_req.serverAuthToken)
+	{
 		return HttpResponse::Forbidden()
 			.insert_header(("X-Forwarded-By", "Titanfront"))
 			.content_type("application/json")
 			.body("{\"success\":false}");
 	}
-	match state.router.add_token(con_req.authToken.clone(), con_req.id, &conf) {
+	match state
+		.router
+		.add_token(con_req.authToken.clone(), con_req.id, &conf)
+	{
 		Ok(_) => {
 			return HttpResponse::Ok()
 				.insert_header(("X-Forwarded-By", "Titanfront"))
 				.content_type("application/json")
 				.body("{\"success\":true}");
-		},
+		}
 		Err(_) => {
 			// Northstar appears to return 200s for failures
 			// HTTP status codes do not cleanly map 503 seems closest
@@ -161,13 +151,14 @@ async fn publish_server(state: &State) -> Result<()> {
 	match reqwest::get(format!("http://{}/verify", conf.auth_address))
 		.await?
 		.text()
-	.await {
+		.await
+	{
 		Ok(s) => {
 			if s != "I am a northstar server!" {
 				log::error!("Possible port contention");
 				return Err!(TitanfrontError::AuthPortBindErr());
 			}
-		},
+		}
 		Err(e) => {
 			log::error!("Liveness check failed");
 			return Err!(TitanfrontError::AuthLiveErr(e));
@@ -182,15 +173,16 @@ async fn publish_server(state: &State) -> Result<()> {
 			map: String::from("????"),
 			playlist: String::from("????"),
 			maxPlayers: conf.player_count as u64,
-			password: conf.password.clone()
+			password: conf.password.clone(),
 		};
 		let client = reqwest::Client::new();
 		let part = Part::text(conf.modinfo.clone())
 			.file_name("modinfo.json")
 			.mime_str("application/json")?;
 		let form = Form::new().part("modinfo", part);
-		let post_req = client.post(format!("{}/server/add_server", conf.auth_server))
-		.header("User-Agent", format!("R2Northstar/{}", conf.version))
+		let post_req = client
+			.post(format!("{}/server/add_server", conf.auth_server))
+			.header("User-Agent", format!("R2Northstar/{}", conf.version))
 			.query(&add_req)
 			.multipart(form)
 			.header("Content-Type", "text/plain")
@@ -204,19 +196,16 @@ async fn publish_server(state: &State) -> Result<()> {
 					let mut auth = state.server_auth.write().unwrap();
 					auth.clone_from(
 						&r.serverAuthToken
-							.ok_or_else(||{TitanfrontError::NMSNoAuthErr()})?
+							.ok_or_else(|| TitanfrontError::NMSNoAuthErr())?,
 					);
 					let mut id = state.server_id.write().unwrap();
-					id.clone_from(
-						&r.id
-							.ok_or_else(||{TitanfrontError::NMSNoIDErr()})?
-					);
+					id.clone_from(&r.id.ok_or_else(|| TitanfrontError::NMSNoIDErr())?);
 					println!("SERVER ID VAL 0:{:?}", id);
 				} else {
 					log::error!("Request failed:{:?}", r);
 					panic!("Could not add server");
 				}
-			},
+			}
 			Err(e) => {
 				log::error!("NorthstarMasterServer issued bad response to registration");
 				return Err!(TitanfrontError::NMSResponseErr(e));
@@ -227,15 +216,16 @@ async fn publish_server(state: &State) -> Result<()> {
 			sleep(Duration::from_secs(5)).await;
 			let heartbeat = Heartbeat {
 				playerCount: state.router.get_player_count(),
-				id: state.server_id.read().unwrap().to_string()
+				id: state.server_id.read().unwrap().to_string(),
 			};
 			let client = reqwest::Client::new();
 			let part = Part::text(conf.modinfo.clone())
 				.file_name("modinfo.json")
 				.mime_str("application/json")?;
 			let form = Form::new().part("modinfo", part);
-			let heartbeat_req = client.post(format!("{}/server/heartbeat", conf.auth_server))
-			.header("User-Agent", format!("R2Northstar/{}", conf.version))
+			let heartbeat_req = client
+				.post(format!("{}/server/heartbeat", conf.auth_server))
+				.header("User-Agent", format!("R2Northstar/{}", conf.version))
 				.query(&heartbeat)
 				.multipart(form)
 				.header("Content-Type", "text/plain")
@@ -243,7 +233,7 @@ async fn publish_server(state: &State) -> Result<()> {
 				.await?
 				.text();
 			match heartbeat_req.await {
-				Ok(r) => {},
+				Ok(r) => {}
 				Err(e) => {
 					log::error!("NorthstarMasterServer issued bad response to heartbeat");
 					return Err!(TitanfrontError::NMSResponseErr(e));
@@ -256,25 +246,27 @@ async fn publish_server(state: &State) -> Result<()> {
 }
 
 async fn server_caller(server: Server) -> Result<()> {
-	server.await.or_else(|err|{Err!(err)})
+	server.await.or_else(|err| Err!(err))
 }
-
 
 pub async fn build_and_run(router: Router, conf: AppConfig) -> Result<()> {
 	// Setup authserver
 	log::info!("Setting up auth server");
-	let state = State{
-		router: router,
+	let state = State {
+		router,
 		conf: conf.clone(),
 		server_id: Arc::new(RwLock::new(String::new())),
-		server_auth: Arc::new(RwLock::new(String::new()))
+		server_auth: Arc::new(RwLock::new(String::new())),
 	};
 	let authsv_state = state.clone();
-	let authserver = HttpServer::new(
-		move || App::new().app_data(Data::new(authsv_state.clone()))
-		.service(verify).service(auth_incoming_player))
-		.bind(conf.auth_address)?
-		.run();
+	let authserver = HttpServer::new(move || {
+		App::new()
+			.app_data(Data::new(authsv_state.clone()))
+			.service(verify)
+			.service(auth_incoming_player)
+	})
+	.bind(conf.auth_address)?
+	.run();
 
 	let serv_caller = server_caller(authserver);
 	let publish = publish_server(&state);

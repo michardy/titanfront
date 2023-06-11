@@ -23,5 +23,5 @@ pub enum TitanfrontError {
 	#[error("NorthstarMasterServer returned an error: {0}")]
 	NMSResponseErr(reqwest::Error),
 	#[error("Issue receiving UDP packets: {0}")]
-	SwitchReceiveErr(std::io::Error)
+	SwitchReceiveErr(std::io::Error),
 }

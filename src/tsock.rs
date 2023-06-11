@@ -1,4 +1,8 @@
-use std::{net::{UdpSocket, ToSocketAddrs, SocketAddr}, hash::Hash, io};
+use std::{
+	hash::Hash,
+	io,
+	net::{SocketAddr, ToSocketAddrs, UdpSocket},
+};
 
 #[derive(Debug)]
 /// Hashable UDP socket
@@ -29,7 +33,7 @@ impl TryClone<TUdpSocket> for TUdpSocket {
 	fn try_clone(&self) -> io::Result<Self> {
 		Ok(TUdpSocket {
 			sock: self.sock.try_clone()?,
-			id: self.id
+			id: self.id,
 		})
 	}
 }
@@ -54,7 +58,7 @@ impl TUdpSocket {
 	pub fn bind<A: ToSocketAddrs>(addr: A, id: usize) -> io::Result<TUdpSocket> {
 		Ok(TUdpSocket {
 			sock: UdpSocket::bind(addr)?,
-			id: id
+			id,
 		})
 	}
 }
