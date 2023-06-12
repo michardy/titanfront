@@ -3,7 +3,10 @@ use crate::{appconfig::AppConfig, apperr::TitanfrontError, tsock::TUdpSocket, Er
 use std::{
 	collections::HashSet,
 	net::{IpAddr, SocketAddr, ToSocketAddrs},
-	sync::Arc,
+	sync::{
+		atomic::{AtomicUsize, Ordering},
+		Arc,
+	},
 };
 
 use {
@@ -62,6 +65,7 @@ pub struct Router {
 	/// Available relay sockets
 	available: RwLock<Vec<TUdpSocket>>,
 	players: DashMap<u64, PlayerInfo>,
+	join_target: AtomicUsize,
 }
 
 fn decrypt(ctext: &[u8], config: &AppConfig) -> Vec<u8> {
@@ -97,7 +101,7 @@ fn encrypt(ptext: &[u8], config: &AppConfig) -> Vec<u8> {
 
 impl Router {
 	// There isn't any reason to convert to a
-	pub fn new(internal_sockets: &[TUdpSocket]) -> Router {
+	pub fn new(internal_sockets: &[TUdpSocket], join_target: usize) -> Router {
 		Router {
 			tokens: DashMap::new(),
 			ips: DashMap::new(),
@@ -105,6 +109,7 @@ impl Router {
 			counters: DashMap::new(),
 			available: RwLock::new(internal_sockets.to_owned()),
 			players: DashMap::new(),
+			join_target: join_target.into(),
 		}
 	}
 	pub async fn add_token(&self, token: String, id: u64, conf: &AppConfig) -> Result<(), ()> {
@@ -214,7 +219,14 @@ impl Router {
 					{
 						// We can safely unwrap here because `available.len()` must be greater than 0
 						let sock = available.pop().unwrap();
-						let target = config.target_servers[config.join_target];
+						// Ideally writes should always beat reads but we can't really guarantee correctness here
+						// Connecting will take a long time for users so having a write beat reads is ideal
+						// Relaxed reads with Acquire for writes is as close as we can get
+						// ALSO ATOMICS BEHAVE DIFFERENTLY ON INTELx86-AMD64 AND ARM
+						// THIS CODE IS NOT GUARANTEED TO BE CONSISTENT ACROSS PLATFORMS
+						// SEE: https://doc.rust-lang.org/nomicon/atomics.html#hardware-reordering
+						let target =
+							config.target_servers[self.join_target.load(Ordering::Relaxed)];
 						sock.send_to(payload, target);
 						self.ips.insert(
 							*addr,

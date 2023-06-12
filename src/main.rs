@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
 	}
 
 	log::info!("Create route tables");
-	let auth_tables = Arc::new(Router::new(&internal_sockets));
+	let auth_tables = Arc::new(Router::new(&internal_sockets, conf.join_target));
 
 	let orig_hook = panic::take_hook();
 	panic::set_hook(Box::new(move |panic_info| {
