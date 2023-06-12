@@ -7,13 +7,13 @@ use std::{
 		atomic::{AtomicUsize, Ordering},
 		Arc,
 	},
+	time::Instant,
 };
 
 use {
 	aes_gcm::{aead::KeyInit, AeadInPlace, Aes128Gcm, Nonce},
 	anyhow::{Context, Result},
 	dashmap::DashMap,
-	ffi::clock,
 	rand::{thread_rng, Rng},
 	tokio::sync::RwLock,
 };
@@ -24,12 +24,6 @@ const PLAYER_CONNECT_MESSAGE: [u8; 13] = [
 const CHALLENGE_AUTH_SERVER_MESSAGE: [u8; 9] =
 	[0xFF, 0xFF, 0xFF, 0xFF, 0x49, 0x54, 0x74, 0x46, 0x72];
 const AAD: [u8; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
-
-mod ffi {
-	extern "C" {
-		pub fn clock() -> ::libc::clock_t;
-	}
-}
 
 #[derive(PartialEq, Debug)]
 enum ConnStat {
@@ -60,7 +54,7 @@ pub struct Router {
 	// Others are fine but this may be slow
 	/// Socket use timestamps
 	/// Used to disconnect dead sessions
-	counters: DashMap<SocketAddr, libc::clock_t>,
+	counters: DashMap<SocketAddr, Instant>,
 	// TODO: consider making non blocking
 	/// Available relay sockets
 	available: RwLock<Vec<TUdpSocket>>,
@@ -129,7 +123,7 @@ impl Router {
 						pair.value().sock.send_to(payload, pair.value().target);
 						// Update the message relay clock
 						// Used to identify which players can be dropped for inactivity
-						self.counters.insert(*addr, unsafe { clock() });
+						self.counters.insert(*addr, Instant::now());
 						return;
 					}
 					ConnStat::Connecting => {
@@ -251,7 +245,7 @@ impl Router {
 		log::info!("Cleaning up closed socket");
 		// TODO: clean up this removal
 		// It has to go outside the scope of the switch's borrow or it might race
-		// Alternatly use a struct that does not race so much
+		// Alternately use a struct that does not race so much
 		let kv = self.ips.remove(addr);
 		// Check to make sure we are not deleting in use IPs
 		assert!(kv.unwrap().1.status == ConnStat::Blocked);
@@ -265,6 +259,31 @@ impl Router {
 
 	pub fn get_player_count(&self) -> u64 {
 		self.ips.len() as u64
+	}
+
+	pub async fn cleanup_dead_connections(&self) {
+		let mut deletes: Vec<SocketAddr> = Vec::new();
+		for refm in self.counters.iter() {
+			let (sock, instant) = refm.pair();
+			if instant.elapsed().as_secs() > 5 {
+				let mut bind = match self.ips.get_mut(&sock) {
+					Some(b) => b,
+					None => {
+						panic!("Failed cleanup! No bind for {:?}", sock);
+					}
+				};
+				deletes.push(*sock);
+				bind.status = ConnStat::Blocked;
+				self.sockets.remove(&bind.sock);
+				self.available.write().await.push(bind.sock.clone())
+			}
+		}
+		// Delete has to go outside the scope of the Bind's borrow or it might race
+		for delete in deletes {
+			let kv = self.ips.remove(&delete);
+			// Check to make sure we are not deleting in use IPs
+			assert!(kv.unwrap().1.status == ConnStat::Blocked);
+		}
 	}
 }
 

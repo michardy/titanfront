@@ -8,7 +8,13 @@ edition = "2021"
 [dependencies]
 # HTTP is generally easier with an async runtime
 # Because most of the game forwarding is done in threads a lightweight one is used
-tokio = { version = "1.23.0", features = ["rt-multi-thread", "macros", "tracing", "parking_lot", "time"] }
+tokio = { version = "1.23.0", features = [
+	"rt-multi-thread",
+	"macros",
+	"tracing",
+	"parking_lot",
+	"time",
+] }
 dashmap = "5.1.0"
 # HTTP server
 actix-web = "4.2.1"
@@ -24,8 +30,6 @@ config = "0.11.0"
 # RUSTFLAGS="-Ctarget-cpu=sandybridge -Ctarget-feature=+aes,+sse2,+sse4.1,+ssse3"
 aes-gcm = "0.10.1"
 generic-array = "0.14.6"
-# Used for clock()
-libc = "0.2.117"
 env_logger = "0.9.0"
 log = "0.4.14"
 # Used by tide and suf for URL encoding
@@ -35,4 +39,9 @@ thiserror = "1.0"
 rand = "0.8"
 
 [build]
-rustflags = ["--cfg", "tokio_unstable", "-Ctarget-cpu=sandybridge", "-Ctarget-feature=+aes,+sse2,+sse4.1,+ssse3"]
+rustflags = [
+	"--cfg",
+	"tokio_unstable",
+	"-Ctarget-cpu=sandybridge",
+	"-Ctarget-feature=+aes,+sse2,+sse4.1,+ssse3",
+]

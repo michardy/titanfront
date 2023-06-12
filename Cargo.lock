@@ -1616,7 +1616,6 @@ dependencies = [
  "dashmap",
  "env_logger",
  "generic-array",
- "libc",
  "log",
  "rand",
  "reqwest",

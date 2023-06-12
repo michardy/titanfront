@@ -9,9 +9,10 @@ use crate::{
 	tsock::TUdpSocket,
 };
 
-use std::{panic, process, sync::Arc};
+use std::{panic, process, sync::Arc, time::Duration};
 
 use anyhow::Result;
+use tokio::time;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -67,6 +68,15 @@ async fn main() -> Result<()> {
 			// Thread errors cannot propagate back to the main thread
 			// If they are unhandled by now they are fatal errors
 			.unwrap();
+	});
+
+	let cleaner_tables = auth_tables.clone();
+	tokio::spawn(async move {
+		let mut interval = time::interval(Duration::from_secs(5));
+		loop {
+			interval.tick().await;
+			cleaner_tables.cleanup_dead_connections().await;
+		}
 	});
 
 	authserver::build_and_run(auth_tables, conf_pointer.clone()).await
