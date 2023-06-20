@@ -165,6 +165,7 @@ async fn publish_server(state: &State) -> Result<()> {
 			return Err!(TitanfrontError::AuthLive(e));
 		}
 	}
+	log::info!("authserver completed startup");
 	if conf.auth_enabled {
 		let add_req = AddRequest {
 			port: conf.udp_address.port(),

@@ -21,8 +21,11 @@ use {
 const PLAYER_CONNECT_MESSAGE: [u8; 13] = [
 	0xFF, 0xFF, 0xFF, 0xFF, 0x48, 0x63, 0x6F, 0x6E, 0x6E, 0x65, 0x63, 0x74, 0x00,
 ];
-const CHALLENGE_AUTH_SERVER_MESSAGE: [u8; 9] =
+const CHALLENGE_AUTH_SERVER_MESSAGE_LEADER: [u8; 9] =
 	[0xFF, 0xFF, 0xFF, 0xFF, 0x49, 0x54, 0x74, 0x46, 0x72];
+const CHALLENGE_AUTH_SERVER_MESSAGE_TRAILER: [u8; 12] = [
+	0x63, 0x6F, 0x6E, 0x6E, 0x65, 0x63, 0x74, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
 const AAD: [u8; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 
 #[derive(PartialEq, Debug)]
@@ -345,7 +348,7 @@ pub async fn external_handler<'a>(
 						.relay_external(&msg[..rl].to_vec(), &addr, &cnf)
 						.await;
 					if auth_server_ips.clone().contains(&addr.ip()) {
-						let mut challenge = Vec::from(CHALLENGE_AUTH_SERVER_MESSAGE);
+						let mut challenge = Vec::from(CHALLENGE_AUTH_SERVER_MESSAGE_LEADER);
 
 						log::debug!("buf: {:?}", &msg[..rl]);
 						let ptext = decrypt(&msg[..rl], &cnf);
@@ -353,6 +356,7 @@ pub async fn external_handler<'a>(
 						let uid = &mut ptext[13..21].to_owned();
 						log::debug!("uid: {:?}", uid);
 						challenge.append(uid);
+						challenge.extend_from_slice(&CHALLENGE_AUTH_SERVER_MESSAGE_TRAILER);
 						let ctext = encrypt(&challenge, &cnf);
 						match insoc.send_to(&ctext, addr).await {
 							Ok(_) => {
