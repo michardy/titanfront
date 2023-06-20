@@ -120,7 +120,10 @@ impl Router {
 			Some(mut pair) => {
 				match pair.value().status {
 					ConnStat::Authenticated => {
-						pair.value().sock.send_to(payload, pair.value().target);
+						pair.value()
+							.sock
+							.send_to(payload, pair.value().target)
+							.await;
 						// Update the message relay clock
 						// Used to identify which players can be dropped for inactivity
 						self.counters.insert(*addr, Instant::now());
@@ -145,7 +148,10 @@ impl Router {
 						if !config.auth_enabled {
 							log::info!("Unauthenticated connection from {}:{}", user_id, user_name);
 							pair.value_mut().status = ConnStat::Authenticated;
-							pair.value().sock.send_to(payload, pair.value().target);
+							pair.value()
+								.sock
+								.send_to(payload, pair.value().target)
+								.await;
 							return;
 						}
 
@@ -161,7 +167,10 @@ impl Router {
 										user_name
 									);
 									pair.value_mut().status = ConnStat::Authenticated;
-									pair.value().sock.send_to(payload, pair.value().target);
+									pair.value()
+										.sock
+										.send_to(payload, pair.value().target)
+										.await;
 									return;
 								} else {
 									log::info!(
@@ -221,7 +230,7 @@ impl Router {
 						// SEE: https://doc.rust-lang.org/nomicon/atomics.html#hardware-reordering
 						let target =
 							config.target_servers[self.join_target.load(Ordering::Relaxed)];
-						sock.send_to(payload, target);
+						sock.send_to(payload, target).await;
 						self.ips.insert(
 							*addr,
 							Bind {
@@ -251,9 +260,9 @@ impl Router {
 		assert!(kv.unwrap().1.status == ConnStat::Blocked);
 	}
 
-	fn relay_internal(&self, payload: &[u8], sender: &TUdpSocket, proxy: &TUdpSocket) {
+	async fn relay_internal(&self, payload: &[u8], sender: &TUdpSocket, proxy: &TUdpSocket) {
 		if let Some(pair) = self.sockets.get(sender) {
-			proxy.send_to(payload, pair.value());
+			proxy.send_to(payload, pair.value()).await;
 		}
 	}
 
@@ -332,7 +341,9 @@ pub async fn external_handler<'a>(
 				let auth_server_ips = auth_ips_pointer.clone();
 				let router = router_pointer.clone();
 				tokio::spawn(async move {
-					router.relay_external(&msg[..rl].to_vec(), &addr, &cnf);
+					router
+						.relay_external(&msg[..rl].to_vec(), &addr, &cnf)
+						.await;
 					if auth_server_ips.clone().contains(&addr.ip()) {
 						let mut challenge = Vec::from(CHALLENGE_AUTH_SERVER_MESSAGE);
 
@@ -374,7 +385,7 @@ pub async fn internal_handler(
 		let mut buf: Vec<u8> = vec![0; config.receive_buf_size];
 		match socket.recv_from(&mut buf).await {
 			Ok((rl, _)) => {
-				routecfg.relay_internal(&buf[..rl], &socket, &proxy);
+				routecfg.relay_internal(&buf[..rl], &socket, &proxy).await;
 			}
 			Err(e) => {
 				log::error!("Issue receiving from internal socket");
